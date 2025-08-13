@@ -1,0 +1,11 @@
+# Bot Configuration
+BOT_TOKEN=your_bot_token_here
+MONGO_URI=your_mongodb_connection_string_here
+GROUP_ID=your_group_id_here
+ADMIN_IDS=admin_user_id1,admin_user_id2,admin_user_id3
+PYROGRAM_SESSION_STRING=your_pyrogram_session_string_here
+API_ID=18274091
+API_HASH=97afe4ab12cb99dab4bed25f768f5bbc
+
+# MongoDB Configuration
+DATABASE_NAME=ludo_bot

@@ -1,0 +1,4 @@
+config.py
+mybot.session
+*.session*
+__pycache__/
