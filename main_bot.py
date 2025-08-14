@@ -101,7 +101,7 @@ class LudoBotManager:
         else:
             welcome_message = "❌ Error creating user account. Please contact admin."
         
-        await update.message.reply_text(welcome_message, parse_mode='Markdown')
+        await update.message.reply_text(welcome_message)
     
     async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /balance command"""
