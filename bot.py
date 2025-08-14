@@ -111,10 +111,8 @@ class LudoBotManager:
                          no_updates=False  # We want to receive updates for edited messages
                      )
                     
-                    # Set up Pyrogram handlers for edited messages
-                    self._setup_pyrogram_handlers()
-                    
                     logger.info("✅ Pyrogram client initialized for edited message handling and admin message editing")
+                    logger.info("ℹ️ Handlers will be set up after client starts")
                     
                 except Exception as e:
                     logger.error(f"❌ Failed to initialize Pyrogram client: {e}")
@@ -154,19 +152,16 @@ class LudoBotManager:
                 return
                 
             try:
+                from pyrogram import handlers
+                
                 # Handler for new messages (game table creation)
-                @self.pyro_client.on_message(
-                    pyrogram_filters.chat(int(self.group_id)) & 
-                    pyrogram_filters.user(self.admin_ids) & 
-                    pyrogram_filters.text
-                )
                 async def on_admin_table_message(client, message):
                     try:
                         logger.info(f"📝 New admin message received: ID={message.id}")
                         logger.info(f"📝 Message content: {message.text}")
                         logger.info(f"🆔 Message ID type: {type(message.id)}, value: {message.id}")
                         
-                        game_data = self.extract_game_data_from_message(message.text)
+                        game_data = self._extract_game_data_from_message(message.text)
                         if game_data:
                             # CRITICAL FIX: Store with message ID as STRING for consistency
                             message_id_str = str(message.id)
@@ -180,11 +175,6 @@ class LudoBotManager:
                         logger.error(f"❌ Error processing new message: {e}")
                 
                 # Handler for edited messages (winner selection)
-                @self.pyro_client.on_edited_message(
-                    pyrogram_filters.chat(int(self.group_id)) & 
-                    pyrogram_filters.user(self.admin_ids) & 
-                    pyrogram_filters.text
-                )
                 async def on_admin_edit_message(client, message):
                     try:
                         logger.info(f"🔄 Edited message received: ID={message.id}")
@@ -252,7 +242,28 @@ class LudoBotManager:
                         import traceback
                         logger.error(f"❌ Full traceback: {traceback.format_exc()}")
                 
+                # Add the handlers to the client
+                message_handler = handlers.MessageHandler(
+                    on_admin_table_message,
+                    pyrogram_filters.chat(int(self.group_id)) & 
+                    pyrogram_filters.user(self.admin_ids) & 
+                    pyrogram_filters.text
+                )
+                
+                edited_message_handler = handlers.MessageHandler(
+                    on_admin_edit_message,
+                    pyrogram_filters.chat(int(self.group_id)) & 
+                    pyrogram_filters.user(self.admin_ids) & 
+                    pyrogram_filters.text & 
+                    pyrogram_filters.edited
+                )
+                
+                # Register the handlers
+                self.pyro_client.add_handler(message_handler)
+                self.pyro_client.add_handler(edited_message_handler)
+                
                 logger.info("✅ Pyrogram handlers set up successfully")
+                logger.info(f"🔧 Registered {len([message_handler, edited_message_handler])} handlers")
                 
             except Exception as e:
                 logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
@@ -267,6 +278,10 @@ class LudoBotManager:
                 # Start the client in the current event loop
                 await self.pyro_client.start()
                 logger.info("✅ Pyrogram client started successfully")
+                
+                # Set up handlers AFTER the client is started
+                self._setup_pyrogram_handlers()
+                logger.info("✅ Pyrogram handlers set up after client start")
                 
                 # Verify connection
                 me = await self.pyro_client.get_me()
@@ -289,12 +304,13 @@ class LudoBotManager:
                 
                 # Verify handlers are set up (check if dispatcher has handlers attribute)
                 try:
-                    if hasattr(self.pyro_client.dispatcher, 'handlers'):
-                        logger.info(f"🔍 Pyrogram handlers count: {len(self.pyro_client.dispatcher.handlers)}")
-                    else:
-                        # Different Pyrogram version - check groups instead
+                    if hasattr(self.pyro_client.dispatcher, 'groups'):
+                        # Check groups dictionary for handlers
                         handler_count = sum(len(group) for group in self.pyro_client.dispatcher.groups.values())
                         logger.info(f"🔍 Pyrogram handlers count: {handler_count}")
+                        logger.info(f"🔍 Pyrogram groups: {list(self.pyro_client.dispatcher.groups.keys())}")
+                    else:
+                        logger.warning("⚠️ Could not determine handler count structure")
                 except Exception as e:
                     logger.warning(f"⚠️ Could not check handler count: {e}")
                 logger.info(f"🔍 Pyrogram status: {self.pyro_client.is_connected}")
@@ -2964,8 +2980,8 @@ class LudoBotManager:
                     )
                 )
                 logger.info("✅ Edited message handler registered with proper filters")
-                
                 # Removed Telegram Bot API edited message handler - using only Pyrogram like test.py
+                
                 logger.info("✅ Using only Pyrogram for edited messages (like test.py)")
                 
                 # Initialize Pyrogram client in the main event loop (not background thread)
