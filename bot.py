@@ -154,62 +154,28 @@ class LudoBotManager:
             
         try:
             # Handler for edited messages in the configured group
-            async def handle_pyrogram_edited_message(client, message):
-                """Handle edited messages via Pyrogram - using test.py approach"""
-                try:
-                    logger.info(f"🔍 Pyrogram: Received edited message {message.id} in chat {message.chat.id}")
+            # Removed old handler functions - using decorators now like test.py
+            
+            # Use exact test.py approach with decorators
+            @self.pyro_client.on_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
+            async def on_admin_table_message(client, message):
+                game_data = self.extract_game_data_from_message(message.text)
+                if game_data:
+                    self.active_games[message.id] = game_data
+                    logger.info(f"🎮 Game created: {game_data}")
+
+            @self.pyro_client.on_edited_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
+            async def on_admin_edit_message(client, message):
+                winner = self.extract_winner_from_edited_message(message.text)
+                if winner and message.id in self.active_games:
+                    game_data = self.active_games.pop(message.id)
+                    logger.info(f"🏆 Winner: {winner} for game: {game_data}")
                     
-                    # Check if this message has a winner (✅ mark)
-                    winner = self.extract_winner_from_edited_message(message.text)
-                    if winner and message.id in self.active_games:
-                        game_data = self.active_games.pop(message.id)
-                        logger.info(f"🏆 Winner: {winner} for game: {game_data}")
-                        
-                        # ✅ Send message to the group announcing the winner (exact copy from test.py)
-                        await client.send_message(
-                            chat_id=message.chat.id,
-                            text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
-                        )
-                    else:
-                        logger.info(f"📝 Pyrogram: No winner found or game not tracked")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Pyrogram: Error handling edited message: {e}")
-            
-            # Handler for new messages in the configured group (to detect game tables)
-            async def handle_pyrogram_new_message(client, message):
-                """Handle new messages via Pyrogram - using test.py approach"""
-                try:
-                    logger.info(f"🔍 Pyrogram: Received new message {message.id} in chat {message.chat.id}")
-                    
-                    # Check if this is a game table message from admin
-                    if message.from_user.id in self.admin_ids:
-                        game_data = self.extract_game_data_from_message(message.text)
-                        if game_data:
-                            self.active_games[message.id] = game_data
-                            logger.info(f"🎮 Game created: {game_data}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Pyrogram: Error handling new message: {e}")
-            
-            # Add handlers using Pyrogram 1.x syntax
-            from pyrogram.handlers import MessageHandler
-            
-            # Add edited message handler - in Pyrogram 1.x, edited messages are handled through MessageHandler
-            self.pyro_client.add_handler(
-                MessageHandler(
-                    handle_pyrogram_edited_message,
-                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.text & pyrogram_filters.edited
-                )
-            )
-            
-            # Add new message handler
-            self.pyro_client.add_handler(
-                MessageHandler(
-                    handle_pyrogram_new_message,
-                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.text & ~pyrogram_filters.edited
-                )
-            )
+                    # ✅ Send message to the group announcing the winner (exact copy from test.py)
+                    await client.send_message(
+                        chat_id=message.chat.id,
+                        text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
+                    )
             
             logger.info("✅ Pyrogram handlers set up successfully")
             
