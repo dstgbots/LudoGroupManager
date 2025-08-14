@@ -62,7 +62,12 @@ def on_admin_edit_message(client, message):
     if winner and message.id in games:
         game_data = games.pop(message.id)
         print(f"Winner: {winner} for game: {game_data}")
-        # Here you’d update balances, send notifications, etc.
+        
+        # ✅ Send message to the group announcing the winner
+        client.send_message(
+            GROUP_ID,
+            f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
+        )
 
 print("Bot is running...")
 app.run()
