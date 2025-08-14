@@ -105,7 +105,7 @@ def show_startup_banner():
     print("🎯 Features: Game Detection, Winner Processing, Balance Management")
     print("=" * 60)
 
-def main():
+async def main():
     """Main entry point for the LudoManager system."""
     show_startup_banner()
     
@@ -132,19 +132,39 @@ def main():
         print("🧠 Loading bot manager...")
         print("🔗 Setting up integration...")
         
-        # Import and initialize bot manager first
+        # Import both systems
         from . import bot
-        print("🧠 Initializing bot manager with all features...")
-        bot_manager_instance = bot.initialize_bot_manager()
-        print("✅ Bot manager initialized successfully")
-        
-        # Import test module but don't run it yet
-        print("📻 Loading Pyrogram listener...")
         from . import test
         
-        # Now start the integrated system
-        print("🔗 Starting integrated Pyrogram + Bot Manager system...")
-        test.start_with_bot_manager(bot_manager_instance)
+        print("🧠 Creating bot manager instance...")
+        bot_manager = bot.LudoBotManager()
+        print("✅ Bot manager created successfully")
+        
+        # Start both systems concurrently
+        print("🔗 Starting BOTH systems concurrently...")
+        print("🤖 Bot API system: /start, /balance, /help commands")
+        print("📡 Pyrogram system: Game detection")
+        
+        import asyncio
+        
+        async def run_both_systems():
+            # Start bot system
+            bot_task = asyncio.create_task(bot_manager.run_async())
+            
+            # Start pyrogram system
+            def start_pyrogram():
+                test.start_with_bot_manager(bot_manager)
+            
+            pyrogram_task = asyncio.create_task(
+                asyncio.to_thread(start_pyrogram)
+            )
+            
+            print("✅ Both systems started concurrently!")
+            
+            # Wait for both
+            await asyncio.gather(bot_task, pyrogram_task)
+        
+        await run_both_systems()
         
         print("\n" + "=" * 60)
         print("🎉 LudoManager is now running!")
@@ -181,6 +201,7 @@ if __name__ == "__main__":
         level=logging.INFO
     )
     
-    success = main()
+    import asyncio
+    success = asyncio.run(main())
     if not success:
         sys.exit(1)
