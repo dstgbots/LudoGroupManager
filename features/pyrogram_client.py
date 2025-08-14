@@ -54,64 +54,9 @@ class PyrogramManager:
         if not self.pyro_client:
             return
             
-        try:
-            # Handler for edited messages in the configured group
-            async def handle_pyrogram_edited_message(client, message):
-                """Handle edited messages via Pyrogram"""
-                try:
-                    logger.info(f"🔍 Pyrogram: Received edited message {message.id} in chat {message.chat.id}")
-                    
-                    # Check if this is a game table message
-                    if ("Full" in message.text or "full" in message.text):
-                        logger.info(f"🎮 Pyrogram: Detected edited game table message: {message.text[:100]}...")
-                        
-                        # Process the edited message for game results
-                        await self._process_pyrogram_edited_message(message)
-                    else:
-                        logger.info(f"📝 Pyrogram: Edited message is not a game table")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Pyrogram: Error handling edited message: {e}")
-            
-            # Handler for new messages in the configured group (to detect game tables)
-            async def handle_pyrogram_new_message(client, message):
-                """Handle new messages via Pyrogram"""
-                try:
-                    logger.info(f"🔍 Pyrogram: Received new message {message.id} in chat {message.chat.id}")
-                    
-                    # Check if this is a game table message from admin
-                    if (("Full" in message.text or "full" in message.text) and
-                        message.from_user.id in self.admin_ids):
-                        
-                        logger.info(f"🎮 Pyrogram: Detected new game table from admin: {message.text[:100]}...")
-                        
-                        # Process the new game table
-                        await self._process_pyrogram_new_game_table(message)
-                        
-                except Exception as e:
-                    logger.error(f"❌ Pyrogram: Error handling new message: {e}")
-            
-            # Add handlers using Pyrogram 1.x syntax
-            # Add edited message handler - in Pyrogram 1.x, edited messages are handled through MessageHandler
-            self.pyro_client.add_handler(
-                MessageHandler(
-                    handle_pyrogram_edited_message,
-                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.text & pyrogram_filters.edited
-                )
-            )
-            
-            # Add new message handler
-            self.pyro_client.add_handler(
-                MessageHandler(
-                    handle_pyrogram_new_message,
-                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.text & ~pyrogram_filters.edited
-                )
-            )
-            
-            logger.info("✅ Pyrogram handlers set up successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
+        # Disabled internal handler setup to avoid version conflicts.
+        # Minimal tracker in features.game_manager is used instead.
+        logger.info("ℹ️ Skipping internal Pyrogram handler setup; using external tracker")
     
     async def start_client(self):
         """Start the Pyrogram client and run it"""
