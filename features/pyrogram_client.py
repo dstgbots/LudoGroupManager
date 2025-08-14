@@ -16,12 +16,13 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 logger = logging.getLogger(__name__)
 
 class PyrogramManager:
-    def __init__(self, api_id, api_hash, group_id, admin_ids):
+    def __init__(self, api_id, api_hash, group_id, admin_ids, bot_token=None):
         """Initialize Pyrogram client and handlers"""
         self.api_id = api_id
         self.api_hash = api_hash
         self.group_id = group_id
         self.admin_ids = admin_ids
+        self.bot_token = bot_token
         self.pyro_client = None
         self.database = None
         self.telegram_bot = None
@@ -33,12 +34,15 @@ class PyrogramManager:
         """Initialize Pyrogram client with API credentials"""
         try:
             logger.info(f"🔍 Pyrogram API credentials found: API_ID={self.api_id}")
-            self.pyro_client = Client(
-                "ludo_bot_pyrogram",
-                api_id=int(self.api_id),
-                api_hash=self.api_hash,
-                no_updates=False  # We want to receive updates for edited messages
-            )
+            client_kwargs = {
+                "name": "ludo_bot_pyrogram",
+                "api_id": int(self.api_id),
+                "api_hash": self.api_hash,
+                "no_updates": False,
+            }
+            if self.bot_token:
+                client_kwargs["bot_token"] = self.bot_token
+            self.pyro_client = Client(**client_kwargs)
             
             # Set up Pyrogram handlers for edited messages
             self._setup_pyrogram_handlers()
