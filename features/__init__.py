@@ -6,14 +6,14 @@ Contains all the feature modules for different bot functionalities
 
 from .database import DatabaseManager
 from .pyrogram_client import PyrogramManager
-from .game_manager import GameManager
+from .game_manager import register_pyro_table_tracker
 from .user_manager import UserManager
 from .balance_sheet import BalanceSheetManager
 
 __all__ = [
     'DatabaseManager',
     'PyrogramManager', 
-    'GameManager',
+    'register_pyro_table_tracker',
     'UserManager',
     'BalanceSheetManager'
 ]
