@@ -165,10 +165,10 @@ class LudoBotManager:
                         game_data = self.active_games.pop(message.id)
                         logger.info(f"🏆 Winner: {winner} for game: {game_data}")
                         
-                        # Send winner announcement to group
+                        # ✅ Send message to the group announcing the winner (exact copy from test.py)
                         await client.send_message(
                             chat_id=message.chat.id,
-                            text=f"🎉 Winner Found: @{winner}\n💰 Prize: ₹{game_data['amount']}"
+                            text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
                         )
                     else:
                         logger.info(f"📝 Pyrogram: No winner found or game not tracked")
@@ -184,7 +184,7 @@ class LudoBotManager:
                     
                     # Check if this is a game table message from admin
                     if message.from_user.id in self.admin_ids:
-                        game_data = self._extract_game_data_from_message(message.text, message.from_user.id, message.id, message.chat.id)
+                        game_data = self.extract_game_data_from_message(message.text)
                         if game_data:
                             self.active_games[message.id] = game_data
                             logger.info(f"🎮 Game created: {game_data}")
@@ -308,8 +308,33 @@ class LudoBotManager:
         except Exception as e:
             logger.error(f"❌ Pyrogram: Error processing new game table: {e}")
     
+    def extract_game_data_from_message(self, message_text):
+        """Extract game data from message text - exact copy from test.py"""
+        lines = message_text.strip().split("\n")
+        usernames = []
+        amount = None
+
+        for line in lines:
+            if "full" in line.lower():
+                match = re.search(r"(\d+)\s*[Ff]ull", line)
+                if match:
+                    amount = int(match.group(1))
+            else:
+                match = re.search(r"@?(\w+)", line)
+                if match:
+                    usernames.append(match.group(1))
+
+        if not usernames or not amount:
+            return None
+
+        return {
+            "players": usernames,
+            "amount": amount,
+            "created_at": datetime.now()
+        }
+
     def extract_winner_from_edited_message(self, message_text):
-        """Extract winner username from edited message text - using test.py method"""
+        """Extract winner username from edited message text - exact copy from test.py"""
         patterns = [
             r'@(\w+)\s*✅',
             r'(\w+)\s*✅',
@@ -862,7 +887,7 @@ Good luck! 🎲
         message_text = update.message.text
         
         # Use the exact test.py method
-        game_data = self._extract_game_data_from_message(message_text, update.effective_user.id, update.message.message_id, update.effective_chat.id)
+        game_data = self.extract_game_data_from_message(message_text)
         if game_data:
             # Store game using message ID as key (like test.py)
             self.active_games[update.message.message_id] = game_data
