@@ -1,4 +1,0 @@
-# LudoManager Dependencies
-pyrogram>=2.0.106
-pymongo>=4.0.0
-python-dotenv>=0.19.0
