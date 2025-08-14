@@ -7,6 +7,7 @@ Uses organized feature modules for better maintainability
 import os
 import logging
 import asyncio
+import threading
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -65,10 +66,11 @@ class LudoBotManager:
         self.pyro_manager = None
         if self.api_id and self.api_hash:
             self.pyro_manager = PyrogramManager(
-                self.api_id, 
-                self.api_hash, 
-                self.group_id, 
-                self.admin_ids
+                self.api_id,
+                self.api_hash,
+                self.group_id,
+                self.admin_ids,
+                bot_token=self.bot_token,
             )
             # Set dependencies
             self.pyro_manager.set_dependencies(self.database, self)
@@ -416,8 +418,15 @@ class LudoBotManager:
                             database=self.database,
                             balance_sheet_manager=self.balance_sheet_manager,
                         )
+                        # Start Pyrogram client in a background thread
+                        def _run_pyro():
+                            try:
+                                self.pyro_manager.pyro_client.run()
+                            except Exception as e:
+                                logger.error(f"Pyrogram client thread exited: {e}")
+                        threading.Thread(target=_run_pyro, daemon=True).start()
                 except Exception as e:
-                    logger.warning(f"Failed to register minimal tracker: {e}")
+                    logger.warning(f"Failed to init/register/start tracker: {e}")
             
             print("Bot is running! Press Ctrl+C to stop.")
             
