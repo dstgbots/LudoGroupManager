@@ -274,13 +274,29 @@ class LudoBotManager:
                 
                 # Test group access
                 try:
-                    chat = await self.pyro_client.get_chat(int(self.group_id))
+                    # Try with the group ID as-is first, then with different formats
+                    group_id_to_test = self.group_id
+                    if isinstance(group_id_to_test, str) and group_id_to_test.startswith('-100'):
+                        # This is likely a supergroup ID, try as-is first
+                        chat = await self.pyro_client.get_chat(int(group_id_to_test))
+                    else:
+                        chat = await self.pyro_client.get_chat(group_id_to_test)
                     logger.info(f"🏠 Group access verified: {chat.title}")
                 except Exception as e:
-                    logger.error(f"⚠️ Cannot access group {self.group_id}: {e}")
+                    logger.warning(f"⚠️ Cannot access group {self.group_id}: {e}")
+                    logger.info("ℹ️ This is normal if the bot hasn't been added to the group yet.")
+                    logger.info("ℹ️ Please add the bot to the group as an admin to enable full functionality.")
                 
-                # Verify handlers are set up
-                logger.info(f"🔍 Pyrogram handlers count: {len(self.pyro_client.dispatcher.handlers)}")
+                # Verify handlers are set up (check if dispatcher has handlers attribute)
+                try:
+                    if hasattr(self.pyro_client.dispatcher, 'handlers'):
+                        logger.info(f"🔍 Pyrogram handlers count: {len(self.pyro_client.dispatcher.handlers)}")
+                    else:
+                        # Different Pyrogram version - check groups instead
+                        handler_count = sum(len(group) for group in self.pyro_client.dispatcher.groups.values())
+                        logger.info(f"🔍 Pyrogram handlers count: {handler_count}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not check handler count: {e}")
                 logger.info(f"🔍 Pyrogram status: {self.pyro_client.is_connected}")
                 
                 return True
@@ -2999,13 +3015,36 @@ class LudoBotManager:
                 logger.info("📋 Allowed updates: message, edited_message, callback_query")
                 
                 try:
-                    await application.run_polling(
+                    # Use start_polling() and idle() instead of run_polling() for proper async handling
+                    await application.initialize()
+                    await application.start()
+                    await application.updater.start_polling(
                         allowed_updates=["message", "edited_message", "callback_query"],
                         drop_pending_updates=True
                     )
+                    
+                    # Keep the application running
+                    logger.info("✅ Bot is now running. Press Ctrl+C to stop.")
+                    try:
+                        # Wait indefinitely until interrupted
+                        while True:
+                            await asyncio.sleep(1)
+                    except KeyboardInterrupt:
+                        logger.info("👋 Stopping bot...")
+                        
+                except KeyboardInterrupt:
+                    logger.info("👋 Bot stopped by user")
                 finally:
                     # Ensure cleanup happens even if the bot stops unexpectedly
-                    await self.cleanup()
+                    logger.info("🧹 Cleaning up resources...")
+                    try:
+                        await self.cleanup()
+                        if application.updater.running:
+                            await application.updater.stop()
+                        await application.stop()
+                        await application.shutdown()
+                    except Exception as cleanup_error:
+                        logger.error(f"❌ Error during cleanup: {cleanup_error}")
                 
             except Exception as e:
                 logger.error(f"Error starting bot: {e}")
@@ -3025,4 +3064,3 @@ class LudoBotManager:
 if __name__ == "__main__":
     bot_manager = LudoBotManager()
     bot_manager.run()
-
