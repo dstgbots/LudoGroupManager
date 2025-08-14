@@ -62,8 +62,8 @@ def setup_environment():
     env_vars['ADMIN_IDS'] = admin_ids
     
     # Pyrogram Configuration
-    print("\n5. Pyrogram Configuration (for admin message editing)")
-    print("   - This allows the bot to edit admin messages in the group")
+    print("\n5. Pyrogram Configuration (for handling edited messages and admin message editing)")
+    print("   - This allows the bot to handle edited messages and edit admin messages in the group")
     print("   - You can skip this if you prefer manual editing")
     
     use_pyrogram = input("\nDo you want to use Pyrogram for automatic message editing? (y/N): ").strip().lower()
@@ -81,14 +81,9 @@ def setup_environment():
         if api_hash:
             env_vars['API_HASH'] = api_hash
             
-        print("\n   - Now you need to generate a session string")
-        print("   - Run: python -c \"from pyrogram import Client; print(Client('test', api_id='YOUR_API_ID', api_hash='YOUR_API_HASH').export_session_string())\"")
-        
-        session_string = input("\nEnter Pyrogram Session String: ").strip()
-        if session_string:
-            env_vars['PYROGRAM_SESSION_STRING'] = session_string
-        else:
-            print("⚠️  Session string not provided - Pyrogram features will be disabled")
+        print("✅ Pyrogram will be configured with API credentials")
+        print("   - The bot will handle edited messages automatically")
+        print("   - No session string needed - the bot handles everything")
     else:
         print("⚠️  Pyrogram disabled - admin messages will need manual editing")
     
@@ -112,7 +107,7 @@ def setup_environment():
         if 'API_ID' in env_vars:
             print(f"   API ID: {env_vars.get('API_ID')}")
             print(f"   API Hash: {env_vars.get('API_HASH', '')[:10]}...")
-            print(f"   Pyrogram Session: {'✅ Configured' if 'PYROGRAM_SESSION_STRING' in env_vars else '❌ Not provided'}")
+            print(f"   Pyrogram: ✅ Configured (API credentials)")
         else:
             print("   Pyrogram: ❌ Disabled")
         

@@ -1,18 +1,19 @@
-# Game Edit Flow - Dual Approach System
+# Game Edit Flow - Direct Pyrogram Integration
 
 ## Overview
-The bot now uses a **dual approach system** to handle game winner selection and table editing:
+The bot now uses **direct Pyrogram integration** to handle game winner selection and table editing:
 
-1. **Primary Method**: Pyrogram-based automatic editing (when working)
-2. **Fallback Method**: Manual detection of edited messages (always available)
+1. **Primary Method**: Pyrogram client integrated directly in the bot (no session strings needed)
+2. **Automatic Detection**: Bot automatically detects new game tables and edited messages
+3. **Real-time Processing**: All game operations happen in real-time via Pyrogram
 
 ## How It Works
 
 ### 1. Game Table Detection
 - Admin sends table directly in group (no `/game` command needed)
 - Table must contain "Full" or "full" keyword
-- Bot automatically detects and processes the table
-- Bot deducts bet amounts from all players
+- **Pyrogram client automatically detects** the new message in real-time
+- Bot processes the table and extracts player data
 - Bot stores `admin_message_id` and `chat_id` for later editing
 
 ### 2. Winner Selection Process
@@ -20,24 +21,24 @@ The bot now uses a **dual approach system** to handle game winner selection and 
 #### Option A: DM Button Selection (Primary)
 - Bot sends winner selection buttons to admin's DM
 - Admin clicks winner button
-- Bot attempts to edit the original table message using Pyrogram
-- If successful: Table is automatically updated with ✅ mark
-- If failed: Bot falls back to manual detection
+- Bot automatically edits the original table message using Pyrogram
+- Table is updated with ✅ mark next to winner's username
+- Game result is processed immediately
 
 #### Option B: Manual Table Editing (Fallback)
-- If Pyrogram editing fails, admin gets instructions
-- Admin manually edits the table message in the group
-- Admin adds ✅ after the winner's username
-- Bot automatically detects the edited message
-- Bot processes the game result
+- If admin prefers manual editing, they can edit the table directly
+- Admin adds ✅ after the winner's username in the group
+- **Pyrogram client automatically detects** the edited message in real-time
+- Bot processes the game result immediately
 
-### 3. Manual Detection System
+### 3. Real-time Detection System
 
-The manual detection is **extremely robust** and will detect winners from edited messages using:
+The Pyrogram client provides **real-time detection** of both new messages and edited messages:
 
+- **Automatic message monitoring** in the configured group
+- **Real-time edited message detection** with ✅ mark recognition
 - **Multiple regex patterns** to catch various formatting styles
 - **Player overlap matching** to find the correct game
-- **Flexible search algorithms** to handle edge cases
 - **Comprehensive logging** for debugging
 
 #### Supported Formats
@@ -112,24 +113,25 @@ The system includes **extensive logging** at every step:
 ## Technical Implementation
 
 ### Key Methods
-- `edit_admin_table_with_winner()`: Pyrogram-based editing
-- `manual_winner_detection_fallback()`: Fallback activation
-- `check_manual_table_edit()`: Manual detection logic
-- `process_game_result()`: Enhanced with manual detection
+- `_setup_pyrogram_handlers()`: Sets up Pyrogram decorators for message handling
+- `_process_pyrogram_new_game_table()`: Processes new game tables via Pyrogram
+- `_process_pyrogram_edited_message()`: Processes edited messages via Pyrogram
+- `_extract_winner_from_edited_message()`: Extracts winner from edited message text
+- `_extract_game_data_from_message()`: Extracts game data from message text
 
 ### Data Flow
-1. Game data stored with `admin_message_id` and `chat_id`
-2. Winner selection attempts Pyrogram editing first
-3. If Pyrogram fails, manual detection is activated
-4. Manual detection monitors all edited messages
-5. Winners detected and game results processed
+1. **Pyrogram client monitors** the configured group in real-time
+2. **New messages** are automatically detected and processed for game tables
+3. **Edited messages** are automatically detected and processed for winners
+4. **Game data** is stored with `admin_message_id` and `chat_id`
+5. **Winners** are detected and game results processed immediately
 
 ### Error Recovery
-- Pyrogram connection issues are handled gracefully
-- Manual detection works independently of Pyrogram
-- System continues functioning regardless of failures
-- Comprehensive error logging for troubleshooting
+- **Pyrogram connection issues** are handled gracefully with automatic reconnection
+- **Real-time monitoring** continues regardless of individual message processing failures
+- **Comprehensive error logging** for troubleshooting and debugging
+- **Automatic fallback** to manual processing if needed
 
 ## Conclusion
 
-This dual approach system ensures that **game winner selection always works**, regardless of technical issues with Pyrogram or other components. The bot automatically adapts to failures and provides clear guidance to users, making the system both reliable and user-friendly.
+This **direct Pyrogram integration** provides **real-time, automatic game processing** without requiring session strings or external authentication. The bot automatically monitors the group for new game tables and edited messages, making the system both reliable and user-friendly. All game operations happen in real-time with comprehensive logging for easy debugging and maintenance.

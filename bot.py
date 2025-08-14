@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import time
 from datetime import datetime, timedelta
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -15,6 +16,7 @@ import html
 # Add pyrogram support for editing admin messages
 try:
     from pyrogram import Client
+    from pyrogram import filters as pyrogram_filters
     PYROGRAM_AVAILABLE = True
 except ImportError:
     PYROGRAM_AVAILABLE = False
@@ -82,28 +84,42 @@ class LudoBotManager:
         self.pinned_balance_msg_id = None
         self._load_pinned_message_id()
         
-        # Initialize Pyrogram client for editing admin messages
+        # Initialize Pyrogram client for handling edited messages and admin message editing
         self.pyro_client = None
         if PYROGRAM_AVAILABLE:
             try:
-                pyrogram_session = os.getenv('PYROGRAM_SESSION_STRING')
-                if pyrogram_session:
-                    logger.info(f"🔍 Pyrogram session string found: {pyrogram_session[:20]}...")
-                    self.pyro_client = Client(
-                        "ludo_bot_session",
-                        api_id=int(os.getenv("API_ID", "18274091")),
-                        api_hash=os.getenv("API_HASH", "97afe4ab12cb99dab4bed25f768f5bbc"),
-                        session_string=pyrogram_session
-                    )
-                    # Note: Pyrogram client will be started when needed (in edit_admin_table_with_winner)
-                    logger.info("✅ Pyrogram client initialized for admin message editing")
-                else:
-                    logger.warning("⚠️ PYROGRAM_SESSION_STRING not found in environment variables")
+                api_id = os.getenv('API_ID', '18274091')
+                api_hash = os.getenv('API_HASH', '97afe4ab12cb99dab4bed25f768f5bbc')
+                
+                # Validate API credentials
+                if not api_id or not api_hash:
+                    logger.warning("⚠️ API_ID or API_HASH not found in environment variables")
+                    return
+                
+                try:
+                    api_id_int = int(api_id)
+                except ValueError:
+                    logger.error(f"❌ Invalid API_ID format: {api_id}")
+                    return
+                
+                logger.info(f"🔍 Pyrogram API credentials found: API_ID={api_id}")
+                self.pyro_client = Client(
+                    "ludo_bot_pyrogram",
+                    api_id=api_id_int,
+                    api_hash=api_hash,
+                    no_updates=False  # We want to receive updates for edited messages
+                )
+                
+                # Set up Pyrogram handlers for edited messages
+                self._setup_pyrogram_handlers()
+                
+                logger.info("✅ Pyrogram client initialized for edited message handling and admin message editing")
+                
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Pyrogram client: {e}")
-                logger.error(f"🔍 Session string length: {len(pyrogram_session) if pyrogram_session else 0}")
+                self.pyro_client = None
         else:
-            logger.warning("⚠️ Pyrogram not available - admin message editing will be disabled")
+            logger.warning("⚠️ Pyrogram not available - edited message handling will be disabled")
     
     async def cleanup(self):
         """Cleanup resources when bot shuts down"""
@@ -130,6 +146,366 @@ class LudoBotManager:
                 logger.info(f"📌 Loaded pinned balance sheet message ID: {self.pinned_balance_msg_id}")
         except Exception as e:
             logger.error(f"Error loading pinned message ID: {e}")
+    
+    def _setup_pyrogram_handlers(self):
+        """Set up Pyrogram handlers for edited messages and other updates"""
+        if not self.pyro_client:
+            return
+            
+        try:
+            # Handler for edited messages in the configured group
+            async def handle_pyrogram_edited_message(client, message):
+                """Handle edited messages via Pyrogram"""
+                try:
+                    logger.info(f"🔍 Pyrogram: Received edited message {message.id} in chat {message.chat.id}")
+                    
+                    # Check if this is a game table message
+                    if ("Full" in message.text or "full" in message.text):
+                        logger.info(f"🎮 Pyrogram: Detected edited game table message: {message.text[:100]}...")
+                        
+                        # Process the edited message for game results
+                        await self._process_pyrogram_edited_message(message)
+                    else:
+                        logger.info(f"📝 Pyrogram: Edited message is not a game table")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Pyrogram: Error handling edited message: {e}")
+            
+            # Handler for new messages in the configured group (to detect game tables)
+            async def handle_pyrogram_new_message(client, message):
+                """Handle new messages via Pyrogram"""
+                try:
+                    logger.info(f"🔍 Pyrogram: Received new message {message.id} in chat {message.chat.id}")
+                    
+                    # Check if this is a game table message from admin
+                    if (("Full" in message.text or "full" in message.text) and
+                        message.from_user.id in self.admin_ids):
+                        
+                        logger.info(f"🎮 Pyrogram: Detected new game table from admin: {message.text[:100]}...")
+                        
+                        # Process the new game table
+                        await self._process_pyrogram_new_game_table(message)
+                        
+                except Exception as e:
+                    logger.error(f"❌ Pyrogram: Error handling new message: {e}")
+            
+            # Add handlers using Pyrogram 1.x syntax
+            from pyrogram.handlers import MessageHandler
+            
+            # Add edited message handler - in Pyrogram 1.x, edited messages are handled through MessageHandler
+            self.pyro_client.add_handler(
+                MessageHandler(
+                    handle_pyrogram_edited_message,
+                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.text & pyrogram_filters.edited
+                )
+            )
+            
+            # Add new message handler
+            self.pyro_client.add_handler(
+                MessageHandler(
+                    handle_pyrogram_new_message,
+                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.text & ~pyrogram_filters.edited
+                )
+            )
+            
+            logger.info("✅ Pyrogram handlers set up successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
+    
+    async def _start_pyrogram_client(self):
+        """Start the Pyrogram client and run it"""
+        try:
+            logger.info("🚀 Starting Pyrogram client...")
+            await self.pyro_client.start()
+            logger.info("✅ Pyrogram client started successfully")
+            
+            # Keep the client running - use a simple loop instead of idle()
+            while True:
+                try:
+                    await asyncio.sleep(1)
+                    if not self.pyro_client.is_connected:
+                        logger.warning("⚠️ Pyrogram client disconnected, attempting to reconnect...")
+                        await self.pyro_client.start()
+                except Exception as e:
+                    logger.error(f"❌ Pyrogram client error: {e}")
+                    await asyncio.sleep(5)  # Wait before retrying
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to start Pyrogram client: {e}")
+            # Set client to None so other parts of the code know it's not available
+            self.pyro_client = None
+    
+    async def _process_pyrogram_edited_message(self, message):
+        """Process edited messages received via Pyrogram"""
+        if not self.pyro_client or not self.pyro_client.is_connected:
+            logger.warning("⚠️ Pyrogram client not available for processing edited message")
+            return
+            
+        try:
+            logger.info(f"🔍 Processing Pyrogram edited message: {message.id}")
+            
+            # Check if this message contains a winner (✅ mark)
+            if "✅" in message.text:
+                logger.info("🏆 Pyrogram: Winner detected in edited message")
+                
+                # Find the corresponding game by message ID
+                game_data = self.games_collection.find_one({
+                    'admin_message_id': message.id,
+                    'chat_id': message.chat.id
+                })
+                
+                if game_data:
+                    logger.info(f"🎮 Pyrogram: Found game {game_data['game_id']} for edited message")
+                    
+                    # Extract winner from the edited message
+                    winner_username = self._extract_winner_from_edited_message(message.text)
+                    
+                    if winner_username:
+                        logger.info(f"🏆 Pyrogram: Winner username extracted: {winner_username}")
+                        
+                        # Process the game result
+                        await self._process_game_result_from_pyrogram(game_data, winner_username, message)
+                    else:
+                        logger.warning("⚠️ Pyrogram: Could not extract winner username from edited message")
+                else:
+                    logger.warning("⚠️ Pyrogram: No game found for edited message")
+                    
+        except Exception as e:
+            logger.error(f"❌ Pyrogram: Error processing edited message: {e}")
+    
+    async def _process_pyrogram_new_game_table(self, message):
+        """Process new game table messages received via Pyrogram"""
+        if not self.pyro_client or not self.pyro_client.is_connected:
+            logger.warning("⚠️ Pyrogram client not available for processing new game table")
+            return
+            
+        try:
+            logger.info(f"🔍 Processing Pyrogram new game table: {message.id}")
+            
+            # Extract game data from the message
+            game_data = self._extract_game_data_from_message(message.text, message.from_user.id, message.id, message.chat.id)
+            
+            if game_data:
+                logger.info(f"🎮 Pyrogram: Game data extracted successfully: {game_data['game_id']}")
+                
+                # Save game to database
+                self.games_collection.insert_one(game_data)
+                self.active_games[game_data['game_id']] = game_data
+                
+                # Send winner selection message to admin's DM
+                await self._send_winner_selection_to_admin(game_data, message.from_user.id)
+                
+                # Send confirmation to group
+                await self._send_group_confirmation(message.chat.id)
+                
+            else:
+                logger.warning("⚠️ Pyrogram: Could not extract game data from message")
+                
+        except Exception as e:
+            logger.error(f"❌ Pyrogram: Error processing new game table: {e}")
+    
+    def _extract_winner_from_edited_message(self, message_text):
+        """Extract winner username from edited message text"""
+        try:
+            # Look for username with ✅ mark
+            import re
+            
+            # Pattern: @username ✅ or username ✅
+            patterns = [
+                r'@(\w+)\s*✅',
+                r'(\w+)\s*✅',
+                r'✅\s*@(\w+)',
+                r'✅\s*(\w+)'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, message_text)
+                if match:
+                    return match.group(1)
+            
+            # If no pattern matches, try line-by-line search
+            lines = message_text.split('\n')
+            for line in lines:
+                if '✅' in line:
+                    # Extract username from the line
+                    username_match = re.search(r'@?(\w+)', line)
+                    if username_match:
+                        return username_match.group(1)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting winner: {e}")
+            return None
+    
+    def _extract_game_data_from_message(self, message_text, admin_user_id, message_id, chat_id):
+        """Extract game data from message text"""
+        try:
+            import re
+            
+            # Extract usernames and amount
+            username_pattern = r'@(\w+)'
+            usernames = re.findall(username_pattern, message_text)
+            
+            # Extract amount (number before "Full")
+            amount_pattern = r'(\d+)\s*Full'
+            amount_match = re.search(amount_pattern, message_text)
+            
+            if usernames and amount_match:
+                amount = int(amount_match.group(1))
+                
+                # Create game data
+                game_id = f"game_{int(time.time())}_{message_id}"
+                game_data = {
+                    'game_id': game_id,
+                    'admin_user_id': admin_user_id,
+                    'admin_message_id': message_id,
+                    'chat_id': chat_id,
+                    'bet_amount': amount,  # Add this field for compatibility
+                    'players': [
+                        {'username': username, 'bet_amount': amount}
+                        for username in usernames
+                    ],
+                    'total_amount': amount * len(usernames),
+                    'status': 'active',
+                    'created_at': datetime.now(),
+                    'expires_at': datetime.now() + timedelta(hours=1)
+                }
+                
+                return game_data
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting game data: {e}")
+            return None
+    
+    async def _send_winner_selection_to_admin(self, game_data, admin_user_id):
+        """Send winner selection message to admin's DM"""
+        if not self.pyro_client or not self.pyro_client.is_connected:
+            logger.warning("⚠️ Pyrogram client not available for sending winner selection")
+            return
+            
+        try:
+            # Create inline keyboard for winner selection
+            keyboard = []
+            for player in game_data['players']:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"🏆 {player['username']}",
+                        callback_data=f"winner_{game_data['game_id']}_{player['username']}"
+                    )
+                ])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Send message to admin's DM
+            await self.pyro_client.send_message(
+                chat_id=admin_user_id,
+                text=f"🎮 **Game Table Processed!**\n\n"
+                     f"**Players:** {', '.join([p['username'] for p in game_data['players']])}\n"
+                     f"**Amount:** ₹{game_data['total_amount']}\n\n"
+                     f"**Select the winner:**",
+                reply_markup=reply_markup,
+                parse_mode="markdown"
+            )
+            
+            logger.info(f"✅ Winner selection sent to admin {admin_user_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending winner selection to admin: {e}")
+    
+    async def _send_group_confirmation(self, chat_id):
+        """Send confirmation message to group"""
+        if not self.pyro_client or not self.pyro_client.is_connected:
+            logger.warning("⚠️ Pyrogram client not available for sending group confirmation")
+            return
+            
+        try:
+            await self.pyro_client.send_message(
+                chat_id=chat_id,
+                text="🎮 Game table processed! Admin will select winner via DM."
+            )
+            logger.info(f"✅ Group confirmation sent to chat {chat_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending group confirmation: {e}")
+    
+    async def _process_game_result_from_pyrogram(self, game_data, winner_username, message):
+        """Process game result from Pyrogram edited message"""
+        if not self.pyro_client or not self.pyro_client.is_connected:
+            logger.warning("⚠️ Pyrogram client not available for processing game result")
+            return
+            
+        try:
+            logger.info(f"🎮 Processing game result for {game_data['game_id']}, winner: {winner_username}")
+            
+            # Find winner player data
+            winner_player = None
+            for player in game_data['players']:
+                if player['username'] == winner_username:
+                    winner_player = player
+                    break
+            
+            if not winner_player:
+                logger.error(f"❌ Winner player not found: {winner_username}")
+                return
+            
+            # Calculate winnings
+            total_amount = game_data['total_amount']
+            winner_amount = total_amount * 0.8  # 80% to winner
+            admin_fee = total_amount * 0.2      # 20% admin fee
+            
+            # Update winner's balance
+            winner_user = self.users_collection.find_one({'username': winner_username})
+            if winner_user:
+                new_balance = winner_user['balance'] + winner_amount
+                self.users_collection.update_one(
+                    {'username': winner_username},
+                    {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                )
+                
+                # Record transaction
+                transaction_data = {
+                    'user_id': winner_user['user_id'],
+                    'type': 'win',
+                    'amount': winner_amount,
+                    'description': f'Game {game_data["game_id"]} - Winner',
+                    'timestamp': datetime.now(),
+                    'game_id': game_data['game_id']
+                }
+                self.transactions_collection.insert_one(transaction_data)
+                
+                # Notify winner
+                await self.pyro_client.send_message(
+                    chat_id=winner_user['user_id'],
+                    text=f"🎉 **Congratulations! You won!**\n\n"
+                         f"**Game:** {game_data['game_id']}\n"
+                         f"**Winnings:** ₹{winner_amount}\n"
+                         f"**New Balance:** ₹{new_balance}"
+                )
+            
+            # Update game status
+            self.games_collection.update_one(
+                {'game_id': game_data['game_id']},
+                {'$set': {
+                    'status': 'completed',
+                    'winner': winner_username,
+                    'winner_amount': winner_amount,
+                    'admin_fee': admin_fee,
+                    'completed_at': datetime.now()
+                }}
+            )
+            
+            # Remove from active games
+            if game_data['game_id'] in self.active_games:
+                del self.active_games[game_data['game_id']]
+            
+            logger.info(f"✅ Game result processed successfully for {game_data['game_id']}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing game result: {e}")
     
     def is_configured_group(self, chat_id: int) -> bool:
         """Check if the given chat_id matches the configured group ID"""
@@ -2553,6 +2929,12 @@ Choose a time period below:
             print(f"✅ Bot Token: {self.bot_token[:10]}...")
             print(f"✅ Group ID: {self.group_id}")
             print(f"✅ Admin IDs: {len(self.admin_ids)} admins configured")
+            
+            # Start Pyrogram client if available
+            if self.pyro_client:
+                print("🚀 Pyrogram client will be started when bot begins polling...")
+                print("✅ Pyrogram handlers configured and ready")
+            
             print("Bot is running! Press Ctrl+C to stop.")
             
             # Start the bot with explicit update types
