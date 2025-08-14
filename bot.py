@@ -851,7 +851,7 @@ Good luck! 🎲
         return None
     
     async def detect_and_process_game_table(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Automatically detect and process game tables when admins send messages with 'Full' keyword"""
+        """Detect and store game table - using test.py approach (just store, don't process)"""
         if not self.is_configured_group(update.effective_chat.id):
             return
             
@@ -861,51 +861,37 @@ Good luck! 🎲
         
         message_text = update.message.text
         
-        # Check if message contains "Full" or "full" keyword
-        if not re.search(r'\b(?:Full|full)\b', message_text):
-                return
+        # Use the exact test.py method
+        game_data = self.extract_game_data_from_message(message_text)
+        if game_data:
+            # Store game using message ID as key (like test.py)
+            self.active_games[update.message.message_id] = game_data
+            logger.info(f"🎮 Game created: {game_data}")
+            # Note: No balance deduction, no notifications - just store and wait for edit
+    
+    async def game_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /game command with help text for game table format"""
+        help_message = (
+            "🎮 **Game Table Format:**\n\n"
+            "Send a message with player usernames and amount:\n"
+            "```\n"
+            "@player1\n"
+            "@player2\n"
+            "@player3\n"
+            "100 Full\n"
+            "```\n\n"
+            "• Each player on a new line\n"
+            "• Add amount followed by 'Full'\n"
+            "• Bot processes results automatically\n\n"
+            "Example table format:\n"
+            "@player1\n@player2\n400 Full")
         
-        logger.info(f"🎮 Detected game table with 'Full' keyword: {message_text}")
-        
-        # Find all @usernames in the message
-        username_pattern = r'@(\w+)'
-        username_matches = re.findall(username_pattern, message_text, re.IGNORECASE)
-        
-        # Find the bet amount (number before "Full")
-        amount_pattern = r'(\d+)\s+(?:Full|full)'
-        amount_matches = re.findall(amount_pattern, message_text, re.IGNORECASE)
-        
-        if not username_matches or not amount_matches:
-            logger.info("❌ Invalid table format - missing usernames or amount")
-            return
-        
-        if len(username_matches) < 2:
-            logger.info("❌ Need at least 2 players for a game")
-            return
-        
-        bet_amount = int(amount_matches[0])
-        logger.info(f"🎮 Processing table: {len(username_matches)} players, bet amount: ₹{bet_amount}")
-        
-        # Create game data
-        game_id = f"game_{update.message.message_id}"
-        game_data = {
-            'game_id': game_id,
-            'admin_message_id': update.message.message_id,  # Admin's table message ID
-            'message_id': update.message.message_id,  # Same as admin message since admin sends table directly
-            'chat_id': update.effective_chat.id,
-            'players': [],
-            'status': 'active',
-            'created_at': datetime.now(),
-            'expires_at': datetime.now() + timedelta(hours=1),
-            'bet_amount': bet_amount
-        }
-        
-        logger.info(f"🔍 Created game data: {game_data}")
-        logger.info(f"🔍 Admin message ID: {update.message.message_id}")
-        logger.info(f"🔍 Chat ID: {update.effective_chat.id}")
-        
-        total_pot = 0
-        valid_players = 0
+        is_group = self.is_configured_group(update.effective_chat.id)
+        if is_group:
+            await self.send_group_response(update, context, help_message)
+        else:
+            await update.message.reply_text(help_message, parse_mode=ParseMode.MARKDOWN)
+        return
         
         for username in username_matches:
             user_data = self.users_collection.find_one({'username': username})
@@ -1700,9 +1686,6 @@ Good luck! 🎲
         
         # Process game tables (new functionality)
         await self.detect_and_process_game_table(update, context)
-        
-        # Process game results (for new messages with ✅)
-        await self.process_game_result(update, context)
     
     async def handle_edited_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle edited messages (mainly for game results)"""
