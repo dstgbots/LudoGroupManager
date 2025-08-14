@@ -184,7 +184,7 @@ class LudoBotManager:
                     
                     # Check if this is a game table message from admin
                     if message.from_user.id in self.admin_ids:
-                        game_data = self.extract_game_data_from_message(message.text)
+                        game_data = self._extract_game_data_from_message(message.text, message.from_user.id, message.id, message.chat.id)
                         if game_data:
                             self.active_games[message.id] = game_data
                             logger.info(f"🎮 Game created: {game_data}")
@@ -862,7 +862,7 @@ Good luck! 🎲
         message_text = update.message.text
         
         # Use the exact test.py method
-        game_data = self.extract_game_data_from_message(message_text)
+        game_data = self._extract_game_data_from_message(message_text, update.effective_user.id, update.message.message_id, update.effective_chat.id)
         if game_data:
             # Store game using message ID as key (like test.py)
             self.active_games[update.message.message_id] = game_data
