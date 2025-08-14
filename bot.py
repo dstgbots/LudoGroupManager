@@ -155,36 +155,39 @@ class LudoBotManager:
         try:
             # Handler for edited messages in the configured group
             async def handle_pyrogram_edited_message(client, message):
-                """Handle edited messages via Pyrogram"""
+                """Handle edited messages via Pyrogram - using test.py approach"""
                 try:
                     logger.info(f"🔍 Pyrogram: Received edited message {message.id} in chat {message.chat.id}")
                     
-                    # Check if this is a game table message
-                    if ("Full" in message.text or "full" in message.text):
-                        logger.info(f"🎮 Pyrogram: Detected edited game table message: {message.text[:100]}...")
+                    # Check if this message has a winner (✅ mark)
+                    winner = self.extract_winner_from_edited_message(message.text)
+                    if winner and message.id in self.active_games:
+                        game_data = self.active_games.pop(message.id)
+                        logger.info(f"🏆 Winner: {winner} for game: {game_data}")
                         
-                        # Process the edited message for game results
-                        await self._process_pyrogram_edited_message(message)
+                        # Send winner announcement to group
+                        await client.send_message(
+                            chat_id=message.chat.id,
+                            text=f"🎉 Winner Found: @{winner}\n💰 Prize: ₹{game_data['amount']}"
+                        )
                     else:
-                        logger.info(f"📝 Pyrogram: Edited message is not a game table")
+                        logger.info(f"📝 Pyrogram: No winner found or game not tracked")
                         
                 except Exception as e:
                     logger.error(f"❌ Pyrogram: Error handling edited message: {e}")
             
             # Handler for new messages in the configured group (to detect game tables)
             async def handle_pyrogram_new_message(client, message):
-                """Handle new messages via Pyrogram"""
+                """Handle new messages via Pyrogram - using test.py approach"""
                 try:
                     logger.info(f"🔍 Pyrogram: Received new message {message.id} in chat {message.chat.id}")
                     
                     # Check if this is a game table message from admin
-                    if (("Full" in message.text or "full" in message.text) and
-                        message.from_user.id in self.admin_ids):
-                        
-                        logger.info(f"🎮 Pyrogram: Detected new game table from admin: {message.text[:100]}...")
-                        
-                        # Process the new game table
-                        await self._process_pyrogram_new_game_table(message)
+                    if message.from_user.id in self.admin_ids:
+                        game_data = self.extract_game_data_from_message(message.text)
+                        if game_data:
+                            self.active_games[message.id] = game_data
+                            logger.info(f"🎮 Game created: {game_data}")
                         
                 except Exception as e:
                     logger.error(f"❌ Pyrogram: Error handling new message: {e}")
@@ -305,116 +308,69 @@ class LudoBotManager:
         except Exception as e:
             logger.error(f"❌ Pyrogram: Error processing new game table: {e}")
     
-    def _extract_winner_from_edited_message(self, message_text):
-        """Extract winner username from edited message text"""
-        try:
-            # Look for username with ✅ mark
-            import re
-            
-            # Pattern: @username ✅ or username ✅
-            patterns = [
-                r'@(\w+)\s*✅',
-                r'(\w+)\s*✅',
-                r'✅\s*@(\w+)',
-                r'✅\s*(\w+)'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, message_text)
-                if match:
-                    return match.group(1)
-            
-            # If no pattern matches, try line-by-line search
-            lines = message_text.split('\n')
-            for line in lines:
-                if '✅' in line:
-                    # Extract username from the line
-                    username_match = re.search(r'@?(\w+)', line)
-                    if username_match:
-                        return username_match.group(1)
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Error extracting winner: {e}")
-            return None
+    def extract_winner_from_edited_message(self, message_text):
+        """Extract winner username from edited message text - using test.py method"""
+        patterns = [
+            r'@(\w+)\s*✅',
+            r'(\w+)\s*✅',
+            r'✅\s*@(\w+)',
+            r'✅\s*(\w+)'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message_text)
+            if match:
+                return match.group(1)
+        return None
     
     def _extract_game_data_from_message(self, message_text, admin_user_id, message_id, chat_id):
-        """Extract game data from message text"""
+        """Extract game data from message text using simplified line-by-line processing"""
         try:
-            import re
-            
-            # Extract usernames and amount
-            username_pattern = r'@(\w+)'
-            usernames = re.findall(username_pattern, message_text)
-            
-            # Extract amount (number before "Full")
-            amount_pattern = r'(\d+)\s*Full'
-            amount_match = re.search(amount_pattern, message_text)
-            
-            if usernames and amount_match:
-                amount = int(amount_match.group(1))
-                
-                # Create game data
-                game_id = f"game_{int(time.time())}_{message_id}"
-                game_data = {
-                    'game_id': game_id,
-                    'admin_user_id': admin_user_id,
-                    'admin_message_id': message_id,
-                    'chat_id': chat_id,
-                    'bet_amount': amount,  # Add this field for compatibility
-                    'players': [
-                        {'username': username, 'bet_amount': amount}
-                        for username in usernames
-                    ],
-                    'total_amount': amount * len(usernames),
-                    'status': 'active',
-                    'created_at': datetime.now(),
-                    'expires_at': datetime.now() + timedelta(hours=1)
-                }
-                
-                return game_data
-            
-            return None
-            
+            lines = message_text.strip().split("\n")
+            usernames = []
+            amount = None
+
+            for line in lines:
+                if "full" in line.lower():
+                    match = re.search(r"(\d+)\s*[Ff]ull", line)
+                    if match:
+                        amount = int(match.group(1))
+                else:
+                    # Extract username with or without @
+                    match = re.search(r"@?(\w+)", line)
+                    if match:
+                        username = match.group(1)
+                        # Filter out common non-username words
+                        if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
+                            usernames.append(username)
+
+            if not usernames or not amount:
+                logger.warning("❌ Invalid table format - missing usernames or amount")
+                return None
+
+            if len(usernames) < 2:
+                logger.warning("❌ Need at least 2 players for a game")
+                return None
+
+            # Create game data
+            game_id = f"game_{int(time.time())}_{message_id}"
+            game_data = {
+                'game_id': game_id,
+                'admin_user_id': admin_user_id,
+                'admin_message_id': message_id,
+                'chat_id': chat_id,
+                'bet_amount': amount,
+                'players': [{'username': username, 'bet_amount': amount} for username in usernames],
+                'total_amount': amount * len(usernames),
+                'status': 'active',
+                'created_at': datetime.now(),
+                'expires_at': datetime.now() + timedelta(hours=1)
+            }
+            return game_data
         except Exception as e:
             logger.error(f"❌ Error extracting game data: {e}")
             return None
     
-    async def _send_winner_selection_to_admin(self, game_data, admin_user_id):
-        """Send winner selection message to admin's DM"""
-        if not self.pyro_client or not self.pyro_client.is_connected:
-            logger.warning("⚠️ Pyrogram client not available for sending winner selection")
-            return
-            
-        try:
-            # Create inline keyboard for winner selection
-            keyboard = []
-            for player in game_data['players']:
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"🏆 {player['username']}",
-                        callback_data=f"winner_{game_data['game_id']}_{player['username']}"
-                    )
-                ])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Send message to admin's DM
-            await self.pyro_client.send_message(
-                chat_id=admin_user_id,
-                text=f"🎮 **Game Table Processed!**\n\n"
-                     f"**Players:** {', '.join([p['username'] for p in game_data['players']])}\n"
-                     f"**Amount:** ₹{game_data['total_amount']}\n\n"
-                     f"**Select the winner:**",
-                reply_markup=reply_markup,
-                parse_mode="markdown"
-            )
-            
-            logger.info(f"✅ Winner selection sent to admin {admin_user_id}")
-            
-        except Exception as e:
-            logger.error(f"❌ Error sending winner selection to admin: {e}")
+    # Removed old winner selection method - using test.py approach instead
     
     async def _send_group_confirmation(self, chat_id):
         """Send confirmation message to group"""
@@ -796,7 +752,7 @@ Good luck! 🎲
             await update.message.reply_text(help_message)
     
     async def process_payment_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Process payment confirmation messages from admins"""
+        """Process payment confirmation messages from admins - using 'Recived From' pattern"""
         if not self.is_configured_group(update.effective_chat.id):
             return
             
@@ -806,26 +762,50 @@ Good luck! 🎲
         
         message_text = update.message.text
         
-        # Pattern to match payment messages: "amount received @username" or "amount reviced @username"
-        payment_pattern = r'(\d+)\s+(?:received|reviced)\s+@(\w+)'
+        # Pattern to match payment messages: "amount Recived From @username ✅"
+        payment_pattern = r'(\d+(?:\.\d+)?)\s+Recived\s+From\s+(?:@(\w+)|.*?)\s*✅'
         match = re.search(payment_pattern, message_text, re.IGNORECASE)
         
         if match:
-            amount = int(match.group(1))
+            amount = float(match.group(1))
             username = match.group(2)
             
-            # Find user by username
-            user_data = self.users_collection.find_one({'username': username})
+            # Try to get user from mention entities first (preferred)
+            user_info = None
+            if update.message.entities:
+                user_info = self._extract_user_from_entities(update.message)
             
-            if user_data:
+            # Fallback to username lookup
+            if not user_info and username:
+                user_data = self.users_collection.find_one({'username': username})
+                if user_data:
+                    user_info = {
+                        'user_id': user_data['user_id'],
+                        'username': user_data.get('username', username)
+                    }
+            
+            if user_info:
                 # Add balance to user
-                new_balance = user_data.get('balance', 0) + amount
+                user_data = self.users_collection.find_one({'user_id': user_info['user_id']})
+                if not user_data:
+                    # Create new user if doesn't exist
+                    user_data = {
+                        'user_id': user_info['user_id'],
+                        'username': user_info['username'],
+                        'balance': 0,
+                        'created_at': datetime.now()
+                    }
+                    self.users_collection.insert_one(user_data)
+                
+                old_balance = user_data.get('balance', 0)
+                new_balance = old_balance + amount
                 
                 self.users_collection.update_one(
-                    {'username': username},
+                    {'user_id': user_info['user_id']},
                     {
                         '$set': {
                             'balance': new_balance,
+                            'username': user_info['username'],
                             'last_updated': datetime.now()
                         }
                     }
@@ -833,32 +813,42 @@ Good luck! 🎲
                 
                 # Record transaction
                 transaction_data = {
-                    'user_id': user_data['user_id'],
+                    'user_id': user_info['user_id'],
                     'type': 'deposit',
                     'amount': amount,
-                    'description': f'Payment confirmed by admin',
+                    'description': f'Payment confirmed by admin - Recived From',
                     'timestamp': datetime.now(),
                     'admin_id': update.effective_user.id
                 }
                 self.transactions_collection.insert_one(transaction_data)
                 
-                # Send confirmation message
-                confirmation_msg = f"✅ Balance updated!\n💰 ₹{amount} added to @{username}'s account\n📊 New balance: ₹{new_balance}"
-                await self.send_group_response(update, context, confirmation_msg)
+                # Send confirmation message (as reply to admin message)
+                username_display = f"@{user_info['username']}" if user_info['username'] else f"User {user_info['user_id']}"
+                confirmation_msg = f"✅ {amount} added successfully to {username_display}"
+                await update.message.reply_text(confirmation_msg)
                 
-                # Update balance sheet after payment confirmation
-                await self.update_balance_sheet(context)
-                
-                # Notify user privately
-                try:
-                    await context.bot.send_message(
-                        chat_id=user_data['user_id'],
-                        text=f"💰 Payment Confirmed!\n\n₹{amount} has been added to your account.\nNew balance: ₹{new_balance}"
-                    )
-                except:
-                    pass  # User might not have started the bot
+                logger.info(f"Balance updated: +{amount} to {user_info['user_id']} by admin {update.effective_user.id}")
             else:
-                await self.send_group_response(update, context, f"❌ User @{username} not found in database. They need to start the bot first.")
+                await update.message.reply_text("❌ Cannot resolve user. Please use a clickable mention or ask the user to /start the bot.")
+    
+    def _extract_user_from_entities(self, message):
+        """Extract user info from message entities (prefers text_mention with user_id)"""
+        for entity in message.entities or []:
+            if entity.type == "text_mention" and entity.user:
+                return {
+                    "user_id": entity.user.id,
+                    "username": entity.user.username or f"user_{entity.user.id}"
+                }
+            if entity.type == "mention":
+                mention_text = message.text[entity.offset:entity.offset + entity.length]
+                username = mention_text.lstrip('@')
+                user_doc = self.users_collection.find_one({"username": username})
+                if user_doc:
+                    return {
+                        "user_id": user_doc["user_id"],
+                        "username": user_doc.get("username") or f"user_{user_doc['user_id']}"
+                    }
+        return None
     
     async def detect_and_process_game_table(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Automatically detect and process game tables when admins send messages with 'Full' keyword"""
