@@ -129,7 +129,7 @@ class LudoBotManager:
         else:
             message += "No recent transactions."
         
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message)
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
@@ -154,7 +154,7 @@ class LudoBotManager:
             "Admin will receive winner selection via DM."
         )
         
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await update.message.reply_text(help_text)
     
     async def balance_sheet_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /balancesheet command (admin only)"""
@@ -168,9 +168,8 @@ class LudoBotManager:
         keyboard = self.balance_sheet_manager.create_balance_sheet_keyboard()
         
         await update.message.reply_text(
-            "📊 **Balance Sheet Options**\nSelect an option:",
-            reply_markup=keyboard,
-            parse_mode='Markdown'
+            "📊 Balance Sheet Options\nSelect an option:",
+            reply_markup=keyboard
         )
     
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,7 +183,7 @@ class LudoBotManager:
         # Get overall statistics
         stats = self.balance_sheet_manager.get_overall_statistics(days=30)
         
-        await update.message.reply_text(stats, parse_mode='Markdown')
+        await update.message.reply_text(stats)
     
     async def active_games_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /activegames command (admin only)"""
@@ -200,7 +199,7 @@ class LudoBotManager:
         # No in-memory active games list with the minimal tracker
         message = "🎮 Active games listing is not available in minimal tracker."
         
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message)
     
     async def expire_games_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /expiregames command (admin only)"""
@@ -214,7 +213,7 @@ class LudoBotManager:
         # Not supported in minimal tracker
         message = "⏰ Expire games is not available in minimal tracker."
         
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message)
     
     async def add_balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /addbalance command (admin only)"""
@@ -277,7 +276,7 @@ class LudoBotManager:
         # Get response from balance sheet manager
         response = self.balance_sheet_manager.handle_balance_sheet_callback(query.data)
         
-        await query.edit_message_text(response, parse_mode='Markdown')
+        await query.edit_message_text(response)
     
     async def handle_winner_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle winner selection from admin DM"""
