@@ -147,126 +147,121 @@ class LudoBotManager:
                 logger.error(f"Error loading pinned message ID: {e}")
         
         def _setup_pyrogram_handlers(self):
-            """Set up Pyrogram handlers for edited messages and other updates"""
+            """Set up Pyrogram v2 compatible handlers for edited messages and other updates"""
             if not self.pyro_client:
                 return
                 
             try:
-                from pyrogram import handlers
+                from pyrogram import filters
                 
-                # Handler for new messages (game table creation)
-                async def on_admin_table_message(client, message):
-                    try:
-                        logger.info(f"📝 New admin message received: ID={message.id}")
-                        logger.info(f"📝 Message content: {message.text}")
-                        logger.info(f"🆔 Message ID type: {type(message.id)}, value: {message.id}")
-                        
-                        game_data = self._extract_game_data_from_message(message.text)
-                        if game_data:
-                            # CRITICAL FIX: Store with message ID as STRING for consistency
-                            message_id_str = str(message.id)
-                            self.active_games[message_id_str] = game_data
-                            logger.info(f"🎮 Pyrogram: Game created with message ID: {message_id_str} (type: {type(message_id_str)})")
-                            logger.info(f"🎮 Game data: {game_data}")
-                            logger.info(f"🔍 Total active games: {len(self.active_games)}")
-                        else:
-                            logger.info("📝 Message doesn't contain game table format")
-                    except Exception as e:
-                        logger.error(f"❌ Error processing new message: {e}")
+                # Filters for new admin game table messages
+                new_table_filter = filters.chat(int(self.group_id)) & filters.user(self.admin_ids) & filters.text
                 
-                # Handler for edited messages (winner selection)
-                async def on_admin_edit_message(client, message):
-                    try:
-                        logger.info(f"🔄 Edited message received: ID={message.id}")
-                        logger.info(f"📝 Edited content: {message.text}")
-                        logger.info(f"🆔 Message ID type: {type(message.id)}, value: {message.id}")
-                        logger.info(f"🔍 Active games count: {len(self.active_games)}")
-                        logger.info(f"🔍 Active game IDs: {list(self.active_games.keys())}")
-                        logger.info(f"🆔 Active game ID types: {[type(k) for k in self.active_games.keys()]}")
-                        
-                        # First check if it contains our winner marker
-                        if "✅" not in message.text:
-                            logger.info("⏭️ Edited message doesn't contain winner marker (✅), skipping")
-                            return
-                            
-                        winner = self.extract_winner_from_edited_message(message.text)
-                        if winner:
-                            logger.info(f"🏆 Winner extracted: {winner}")
-                            
-                            # CRITICAL FIX: Check using STRING message ID for consistency
-                            message_id_str = str(message.id)
-                            logger.info(f"🔍 Looking for game with ID: {message_id_str} (converted to string)")
-                            
-                            if message_id_str in self.active_games:
-                                game_data = self.active_games.pop(message_id_str)
-                                logger.info(f"🎮 Found matching game: {game_data}")
-                                
-                                # Send winner announcement
-                                await client.send_message(
-                                    chat_id=message.chat.id,
-                                    text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
-                                )
-                                logger.info(f"✅ Winner announcement sent for {winner}")
-                            else:
-                                logger.warning(f"⚠️ No active game found for message ID: {message_id_str}")
-                                logger.warning(f"⚠️ Available game IDs: {list(self.active_games.keys())}")
-                                
-                                # FALLBACK: Try content-based matching
-                                logger.info("🔄 Trying content-based fallback matching...")
-                                message_usernames = re.findall(r'@([a-zA-Z0-9_]+)', message.text)
-                                amount_match = re.search(r'(\d+)\s*[Ff]ull', message.text)
-                                
-                                if message_usernames and amount_match:
-                                    amount = int(amount_match.group(1))
-                                    logger.info(f"🔍 Looking for game with amount: {amount} and players: {message_usernames}")
-                                    
-                                    for game_id, game in list(self.active_games.items()):
-                                        player_overlap = len(set(message_usernames) & set(game['players']))
-                                        if game['amount'] == amount and player_overlap >= 2:
-                                            game_data = self.active_games.pop(game_id)
-                                            logger.info(f"🔄 Found game via content matching: {game_id}")
-                                            
-                                            # Send winner announcement
-                                            await client.send_message(
-                                                chat_id=message.chat.id,
-                                                text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
-                                            )
-                                            logger.info(f"✅ Winner announcement sent via fallback matching")
-                                            break
-                        else:
-                            logger.warning("⚠️ Found ✅ but couldn't extract winner username")
-                            logger.warning(f"⚠️ Message text for debugging: '{message.text}'")
-                            
-                    except Exception as e:
-                        logger.error(f"❌ Error handling edited message: {e}")
-                        import traceback
-                        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                # Filters for edited admin game table messages (Pyrogram v2 style)
+                edited_table_filter = filters.chat(int(self.group_id)) & filters.user(self.admin_ids) & filters.text
                 
-                # Add the handlers to the client
-                message_handler = handlers.MessageHandler(
-                    on_admin_table_message,
-                    pyrogram_filters.chat(int(self.group_id)) & 
-                    pyrogram_filters.user(self.admin_ids) & 
-                    pyrogram_filters.text
-                )
+                # Handle new game table messages
+                @self.pyro_client.on_message(new_table_filter)
+                async def on_new_table(client, message):
+                    self._handle_new_table_message(message)
                 
-                edited_message_handler = handlers.MessageHandler(
-                    on_admin_edit_message,
-                    pyrogram_filters.chat(int(self.group_id)) & 
-                    pyrogram_filters.user(self.admin_ids) & 
-                    pyrogram_filters.text & 
-                    pyrogram_filters.edited
-                )
-                
-                # Register the handlers
-                self.pyro_client.add_handler(message_handler)
-                self.pyro_client.add_handler(edited_message_handler)
+                # Handle edited game table messages
+                @self.pyro_client.on_edited_message(edited_table_filter)
+                async def on_edit_table(client, message):
+                    self._handle_edited_table_message(message)
                 
                 logger.info("✅ Pyrogram handlers set up successfully")
-                logger.info(f"🔧 Registered {len([message_handler, edited_message_handler])} handlers")
                 
             except Exception as e:
                 logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
+                import traceback
+                logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        def _handle_new_table_message(self, message):
+            """Handle new game table messages from admins"""
+            try:
+                logger.info(f"📝 New admin message received: ID={message.id}")
+                logger.info(f"📝 Message content: {message.text}")
+                logger.info(f"🆔 Message ID type: {type(message.id)}, value: {message.id}")
+                
+                game_data = self._extract_game_data_from_message(message.text)
+                if game_data:
+                    # CRITICAL FIX: Store with message ID as STRING for consistency
+                    message_id_str = str(message.id)
+                    self.active_games[message_id_str] = game_data
+                    logger.info(f"🎮 Pyrogram: Game created with message ID: {message_id_str} (type: {type(message_id_str)})")
+                    logger.info(f"🎮 Game data: {game_data}")
+                    logger.info(f"🔍 Total active games: {len(self.active_games)}")
+                else:
+                    logger.info("📝 Message doesn't contain game table format")
+            except Exception as e:
+                logger.error(f"❌ Error processing new message: {e}")
+        
+        async def _handle_edited_table_message(self, message):
+            """Handle edited game table messages from admins (winner detection)"""
+            try:
+                logger.info(f"🔄 Edited message received: ID={message.id}")
+                logger.info(f"📝 Edited content: {message.text}")
+                logger.info(f"🆔 Message ID type: {type(message.id)}, value: {message.id}")
+                logger.info(f"🔍 Active games count: {len(self.active_games)}")
+                logger.info(f"🔍 Active game IDs: {list(self.active_games.keys())}")
+                logger.info(f"🆔 Active game ID types: {[type(k) for k in self.active_games.keys()]}")
+                
+                # First check if it contains our winner marker
+                if "✅" not in message.text:
+                    logger.info("⏭️ Edited message doesn't contain winner marker (✅), skipping")
+                    return
+                    
+                winner = self.extract_winner_from_edited_message(message.text)
+                if winner:
+                    logger.info(f"🏆 Winner extracted: {winner}")
+                    
+                    # CRITICAL FIX: Check using STRING message ID for consistency
+                    message_id_str = str(message.id)
+                    logger.info(f"🔍 Looking for game with ID: {message_id_str} (converted to string)")
+                    
+                    if message_id_str in self.active_games:
+                        game_data = self.active_games.pop(message_id_str)
+                        logger.info(f"🎮 Found matching game: {game_data}")
+                        
+                        # Send winner announcement
+                        await self.pyro_client.send_message(
+                            chat_id=message.chat.id,
+                            text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
+                        )
+                        logger.info(f"✅ Winner announcement sent for {winner}")
+                    else:
+                        logger.warning(f"⚠️ No active game found for message ID: {message_id_str}")
+                        logger.warning(f"⚠️ Available game IDs: {list(self.active_games.keys())}")
+                        
+                        # FALLBACK: Try content-based matching
+                        logger.info("🔄 Trying content-based fallback matching...")
+                        message_usernames = re.findall(r'@([a-zA-Z0-9_]+)', message.text)
+                        amount_match = re.search(r'(\d+)\s*[Ff]ull', message.text)
+                        
+                        if message_usernames and amount_match:
+                            amount = int(amount_match.group(1))
+                            logger.info(f"🔍 Looking for game with amount: {amount} and players: {message_usernames}")
+                            
+                            for game_id, game in list(self.active_games.items()):
+                                player_overlap = len(set(message_usernames) & set(game['players']))
+                                if game['amount'] == amount and player_overlap >= 2:
+                                    game_data = self.active_games.pop(game_id)
+                                    logger.info(f"🔄 Found game via content matching: {game_id}")
+                                    
+                                    # Send winner announcement
+                                    await self.pyro_client.send_message(
+                                        chat_id=message.chat.id,
+                                        text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
+                                    )
+                                    logger.info(f"✅ Winner announcement sent via fallback matching")
+                                    break
+                else:
+                    logger.warning("⚠️ Found ✅ but couldn't extract winner username")
+                    logger.warning(f"⚠️ Message text for debugging: '{message.text}'")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error handling edited message: {e}")
                 import traceback
                 logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         
@@ -302,13 +297,17 @@ class LudoBotManager:
                     logger.info("ℹ️ This is normal if the bot hasn't been added to the group yet.")
                     logger.info("ℹ️ Please add the bot to the group as an admin to enable full functionality.")
                 
-                # Verify handlers are set up (check if dispatcher has handlers attribute)
+                # Verify handlers are set up using Pyrogram v2 decorators
                 try:
                     if hasattr(self.pyro_client.dispatcher, 'groups'):
                         # Check groups dictionary for handlers
                         handler_count = sum(len(group) for group in self.pyro_client.dispatcher.groups.values())
-                        logger.info(f"🔍 Pyrogram handlers count: {handler_count}")
-                        logger.info(f"🔍 Pyrogram groups: {list(self.pyro_client.dispatcher.groups.keys())}")
+                        logger.info(f"🔍 Pyrogram v2 handlers count: {handler_count}")
+                        logger.info(f"🔍 Pyrogram handler groups: {list(self.pyro_client.dispatcher.groups.keys())}")
+                        if handler_count >= 2:
+                            logger.info("✅ Expected handlers detected (new message + edited message)")
+                        else:
+                            logger.warning(f"⚠️ Expected 2+ handlers, found {handler_count}")
                     else:
                         logger.warning("⚠️ Could not determine handler count structure")
                 except Exception as e:
