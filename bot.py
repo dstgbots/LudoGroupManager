@@ -259,12 +259,12 @@ class LudoBotManager:
                 import traceback
                 logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         
-        async def _start_pyrogram_client(self):
-            """Start the Pyrogram client and run it"""
+        async def _initialize_pyrogram_properly(self):
+            """Initialize Pyrogram client properly in the main event loop"""
             try:
-                logger.info("🚀 Starting Pyrogram client...")
+                logger.info("🚀 Initializing Pyrogram client in main event loop...")
                 
-                # Start the client
+                # Start the client in the current event loop
                 await self.pyro_client.start()
                 logger.info("✅ Pyrogram client started successfully")
                 
@@ -279,24 +279,19 @@ class LudoBotManager:
                 except Exception as e:
                     logger.error(f"⚠️ Cannot access group {self.group_id}: {e}")
                 
-                # Keep the client running - use a simple loop instead of idle()
-                logger.info("🔄 Pyrogram client is now running and listening for events")
-                while True:
-                    try:
-                        await asyncio.sleep(1)
-                        if not self.pyro_client.is_connected:
-                            logger.warning("⚠️ Pyrogram client disconnected, attempting to reconnect...")
-                            await self.pyro_client.start()
-                    except Exception as e:
-                        logger.error(f"❌ Pyrogram client error: {e}")
-                        await asyncio.sleep(5)  # Wait before retrying
+                # Verify handlers are set up
+                logger.info(f"🔍 Pyrogram handlers count: {len(self.pyro_client.dispatcher.handlers)}")
+                logger.info(f"🔍 Pyrogram status: {self.pyro_client.is_connected}")
+                
+                return True
                 
             except Exception as e:
-                logger.error(f"❌ Failed to start Pyrogram client: {e}")
+                logger.error(f"❌ Failed to initialize Pyrogram client: {e}")
                 import traceback
                 logger.error(f"❌ Full traceback: {traceback.format_exc()}")
                 # Set client to None so other parts of the code know it's not available
                 self.pyro_client = None
+                return False
         
         async def _process_pyrogram_edited_message(self, message):
             """Process edited messages received via Pyrogram"""
@@ -2895,8 +2890,8 @@ class LudoBotManager:
             
             return report
         
-        def run(self):
-            """Start the bot"""
+        async def run_async(self):
+            """Start the bot asynchronously"""
             # Validate configuration
             if not self.bot_token:
                 print("❌ BOT_TOKEN not found in environment variables!")
@@ -2957,16 +2952,15 @@ class LudoBotManager:
                 # Removed Telegram Bot API edited message handler - using only Pyrogram like test.py
                 logger.info("✅ Using only Pyrogram for edited messages (like test.py)")
                 
-                # Start Pyrogram client in a background thread
+                # Initialize Pyrogram client in the main event loop (not background thread)
                 if self.pyro_client:
-                    import threading, asyncio as _asyncio
-                    def _run_pyro():
-                        try:
-                            _asyncio.run(self._start_pyrogram_client())
-                        except Exception as e:
-                            logger.error(f"❌ Pyrogram background start failed: {e}")
-                    threading.Thread(target=_run_pyro, daemon=True).start()
-                    logger.info("🚀 Pyrogram client starting in background thread")
+                    try:
+                        # Start Pyrogram in the same event loop as PTB
+                        await self._initialize_pyrogram_properly()
+                        logger.info("✅ Pyrogram client initialized in main event loop")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to initialize Pyrogram in main loop: {e}")
+                        self.pyro_client = None
                 
                 # Set up job queue for periodic tasks (if available)
                 job_queue = application.job_queue
@@ -3003,14 +2997,30 @@ class LudoBotManager:
                 # Start the bot with explicit update types
                 logger.info("🚀 Starting bot with polling...")
                 logger.info("📋 Allowed updates: message, edited_message, callback_query")
-                application.run_polling(
-                    allowed_updates=["message", "edited_message", "callback_query"],
-                    drop_pending_updates=True
-                )
+                
+                try:
+                    await application.run_polling(
+                        allowed_updates=["message", "edited_message", "callback_query"],
+                        drop_pending_updates=True
+                    )
+                finally:
+                    # Ensure cleanup happens even if the bot stops unexpectedly
+                    await self.cleanup()
                 
             except Exception as e:
                 logger.error(f"Error starting bot: {e}")
                 print(f"❌ Failed to start bot: {e}")
+        
+        def run(self):
+            """Synchronous wrapper for the async run method"""
+            try:
+                import asyncio
+                asyncio.run(self.run_async())
+            except KeyboardInterrupt:
+                print("\n👋 Bot stopped by user")
+            except Exception as e:
+                logger.error(f"❌ Fatal error: {e}")
+                print(f"❌ Fatal error: {e}")
 
 if __name__ == "__main__":
     bot_manager = LudoBotManager()
