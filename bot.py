@@ -153,9 +153,6 @@ class LudoBotManager:
             return
             
         try:
-            # Handler for edited messages in the configured group
-            # Removed old handler functions - using decorators now like test.py
-            
             # Use exact test.py approach with decorators
             @self.pyro_client.on_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
             async def on_admin_table_message(client, message):
