@@ -12,14 +12,21 @@ from datetime import datetime
 
 def check_dependencies():
     """Check if all required dependencies are installed."""
-    required_packages = ['pyrogram', 'pymongo', 'python-telegram-bot', 'python-dotenv']
+    # Map package names to their import names
+    package_mapping = {
+        'pyrogram': 'pyrogram',
+        'pymongo': 'pymongo', 
+        'python-telegram-bot': 'telegram',
+        'python-dotenv': 'dotenv'
+    }
+    
     missing_packages = []
     
-    for package in required_packages:
+    for package_name, import_name in package_mapping.items():
         try:
-            __import__(package.replace('-', '_'))
+            __import__(import_name)
         except ImportError:
-            missing_packages.append(package)
+            missing_packages.append(package_name)
     
     if missing_packages:
         print("❌ Missing required packages:")
