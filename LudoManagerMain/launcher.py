@@ -84,12 +84,15 @@ class LudoManagerLauncher:
             
             # Import and initialize bot manager first
             import bot
-            bot.initialize_bot_manager()
+            bot_manager_instance = bot.initialize_bot_manager()
             print("✅ Bot manager initialized")
             
-            # Now start the Pyrogram listener
+            # Now start the Pyrogram listener with the bot manager
             import test
-            print("✅ Pyrogram listener started")
+            print("📡 Starting Pyrogram client...")
+            print("🔄 This should start the app.run() and keep running...")
+            test.start_with_bot_manager(bot_manager_instance)
+            print("⚠️ If you see this message, the Pyrogram client stopped unexpectedly")
             
         except KeyboardInterrupt:
             print("👋 Pyrogram listener stopped by user")
