@@ -13,7 +13,12 @@ import re
 from datetime import datetime
 
 # Import the business logic module
-import bot
+try:
+    # Try relative import for package usage
+    from . import bot
+except ImportError:
+    # Fall back to direct import for standalone usage
+    import bot
 
 # Configuration - Replace with your actual values
 API_ID = 18274091
