@@ -15,14 +15,21 @@ from datetime import datetime
 
 def check_dependencies():
     """Check if all required dependencies are installed."""
-    required_packages = ['pyrogram', 'pymongo', 'python-telegram-bot', 'python-dotenv']
+    # Map package names to their import names
+    package_mapping = {
+        'pyrogram': 'pyrogram',
+        'pymongo': 'pymongo', 
+        'python-telegram-bot': 'telegram',
+        'python-dotenv': 'dotenv'
+    }
+    
     missing_packages = []
     
-    for package in required_packages:
+    for package_name, import_name in package_mapping.items():
         try:
-            __import__(package.replace('-', '_'))
+            __import__(import_name)
         except ImportError:
-            missing_packages.append(package)
+            missing_packages.append(package_name)
     
     if missing_packages:
         print("❌ Missing required packages:")
@@ -125,14 +132,19 @@ def main():
         print("🧠 Loading bot manager...")
         print("🔗 Setting up integration...")
         
-        # Import and initialize bot manager
+        # Import and initialize bot manager first
         from . import bot
-        bot.initialize_bot_manager()
-        print("✅ Bot manager initialized with all features")
+        print("🧠 Initializing bot manager with all features...")
+        bot_manager_instance = bot.initialize_bot_manager()
+        print("✅ Bot manager initialized successfully")
         
-        # Start the Pyrogram listener
-        print("📻 Starting Pyrogram listener for message detection...")
+        # Import test module but don't run it yet
+        print("📻 Loading Pyrogram listener...")
         from . import test
+        
+        # Now start the integrated system
+        print("🔗 Starting integrated Pyrogram + Bot Manager system...")
+        test.start_with_bot_manager(bot_manager_instance)
         
         print("\n" + "=" * 60)
         print("🎉 LudoManager is now running!")
