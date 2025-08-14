@@ -153,26 +153,37 @@ class LudoBotManager:
             return
             
         try:
-            # Use exact test.py approach with decorators
-            @self.pyro_client.on_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
+            # Define handler functions using test.py logic
             async def on_admin_table_message(client, message):
                 game_data = self.extract_game_data_from_message(message.text)
                 if game_data:
                     self.active_games[message.id] = game_data
                     logger.info(f"🎮 Game created: {game_data}")
-
-            @self.pyro_client.on_edited_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
+            
             async def on_admin_edit_message(client, message):
                 winner = self.extract_winner_from_edited_message(message.text)
                 if winner and message.id in self.active_games:
                     game_data = self.active_games.pop(message.id)
                     logger.info(f"🏆 Winner: {winner} for game: {game_data}")
-                    
-                    # ✅ Send message to the group announcing the winner (exact copy from test.py)
                     await client.send_message(
                         chat_id=message.chat.id,
                         text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
                     )
+            
+            # Register handlers using add_handler (works across Pyrogram versions)
+            from pyrogram.handlers import MessageHandler
+            self.pyro_client.add_handler(
+                MessageHandler(
+                    on_admin_table_message,
+                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text & ~pyrogram_filters.edited
+                )
+            )
+            self.pyro_client.add_handler(
+                MessageHandler(
+                    on_admin_edit_message,
+                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text & pyrogram_filters.edited
+                )
+            )
             
             logger.info("✅ Pyrogram handlers set up successfully")
             
@@ -2816,7 +2827,7 @@ Choose a time period below:
             logger.info("✅ Callback query handlers added")
             
             # Callback query handler for winner selection (from admin DM)
-            application.add_handler(CallbackQueryHandler(self.handle_winner_selection, pattern=r"^winner_"))
+            application.add_handler(CommandHandler("winner", self.handle_winner_selection))
             logger.info("✅ Winner selection handler added for admin DM")
             
             # Message handler for all text messages
@@ -2825,6 +2836,17 @@ Choose a time period below:
             # Removed Telegram Bot API edited message handler - using only Pyrogram like test.py
             logger.info("✅ Using only Pyrogram for edited messages (like test.py)")
             
+            # Start Pyrogram client in a background thread
+            if self.pyro_client:
+                import threading, asyncio as _asyncio
+                def _run_pyro():
+                    try:
+                        _asyncio.run(self._start_pyrogram_client())
+                    except Exception as e:
+                        logger.error(f"❌ Pyrogram background start failed: {e}")
+                threading.Thread(target=_run_pyro, daemon=True).start()
+                logger.info("🚀 Pyrogram client starting in background thread")
+            
             # Set up job queue for periodic tasks (if available)
             job_queue = application.job_queue
             
@@ -2832,8 +2854,8 @@ Choose a time period below:
                 # Schedule game expiration check every 5 minutes
                 job_queue.run_repeating(
                     callback=self.expire_old_games,
-                    interval=300,  # 5 minutes
-                    first=60,      # Start after 1 minute
+                    interval=300,
+                    first=60,
                     name="expire_games"
                 )
                 print("✅ Game expiration monitor started (checks every 5 minutes)")
@@ -2841,8 +2863,8 @@ Choose a time period below:
                 # Schedule balance sheet update every 5 minutes
                 job_queue.run_repeating(
                     callback=self.periodic_balance_sheet_update,
-                    interval=300,  # 5 minutes
-                    first=120,     # Start after 2 minutes
+                    interval=300,
+                    first=120,
                     name="balance_sheet_update"
                 )
                 print("✅ Balance sheet auto-update started (updates every 5 minutes)")
@@ -2854,11 +2876,6 @@ Choose a time period below:
             print(f"✅ Bot Token: {self.bot_token[:10]}...")
             print(f"✅ Group ID: {self.group_id}")
             print(f"✅ Admin IDs: {len(self.admin_ids)} admins configured")
-            
-            # Start Pyrogram client if available
-            if self.pyro_client:
-                print("🚀 Pyrogram client will be started when bot begins polling...")
-                print("✅ Pyrogram handlers configured and ready")
             
             print("Bot is running! Press Ctrl+C to stop.")
             
