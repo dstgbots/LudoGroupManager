@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from features import (
     DatabaseManager,
     PyrogramManager,
-    GameManager,
+    register_pyro_table_tracker,
     UserManager,
     BalanceSheetManager
 )
@@ -58,7 +58,7 @@ class LudoBotManager:
         
         # Initialize feature managers
         self.user_manager = UserManager(self.database, self)
-        self.game_manager = GameManager(self.database, self)
+        # GameManager removed in favor of Pyrogram table tracker
         self.balance_sheet_manager = BalanceSheetManager(self.database, self)
         
         # Initialize Pyrogram manager if credentials are available
@@ -72,6 +72,7 @@ class LudoBotManager:
             )
             # Set dependencies
             self.pyro_manager.set_dependencies(self.database, self)
+            # Also register the minimal tracker directly on the low-level app if available
         
         # Bot application
         self.application = None
@@ -196,15 +197,8 @@ class LudoBotManager:
         # Get active games
         active_games = self.game_manager.get_active_games()
         
-        if active_games:
-            message = f"🎮 **Active Games ({len(active_games)})**\n\n"
-            for game in active_games:
-                message += f"**Game ID:** {game['game_id']}\n"
-                message += f"**Players:** {len(game['players'])}\n"
-                message += f"**Amount:** ₹{game['bet_amount']}\n"
-                message += f"**Created:** {game['created_at'].strftime('%m-%d %H:%M')}\n\n"
-        else:
-            message = "🎮 No active games found."
+        # No in-memory active games list with the minimal tracker
+        message = "🎮 Active games listing is not available in minimal tracker."
         
         await update.message.reply_text(message, parse_mode='Markdown')
     
@@ -217,16 +211,8 @@ class LudoBotManager:
             return
         
         # Expire old games
-        expired_games = self.game_manager.expire_old_games(expiry_hours=24)
-        
-        if expired_games:
-            message = f"⏰ **Expired Games ({len(expired_games)})**\n\n"
-            for game in expired_games:
-                message += f"**Game ID:** {game['game_id']}\n"
-                message += f"**Players:** {len(game['players'])}\n"
-                message += f"**Amount:** ₹{game['bet_amount']}\n\n"
-        else:
-            message = "⏰ No games expired."
+        # Not supported in minimal tracker
+        message = "⏰ Expire games is not available in minimal tracker."
         
         await update.message.reply_text(message, parse_mode='Markdown')
     
@@ -307,22 +293,17 @@ class LudoBotManager:
         game_id = data[1]
         winner_username = data[2]
         
-        # Process game result
-        success = self.game_manager.process_game_result(game_id, winner_username)
-        
-        if success:
-            await query.edit_message_text(
-                f"🏆 **Winner Selected!**\n\n"
-                f"**Game:** {game_id}\n"
-                f"**Winner:** {winner_username}\n\n"
-                f"Game result processed successfully!"
-            )
-        else:
-            await query.edit_message_text("❌ Failed to process game result.")
+        # Minimal tracker handles winner via edit in Pyrogram; DM/crediting happens there
+        await query.edit_message_text(
+            f"🏆 **Winner Selected!**\n\n"
+            f"**Game:** {game_id}\n"
+            f"**Winner:** {winner_username}\n\n"
+            f"Result will be processed automatically."
+        )
     
     async def handle_all_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle all text messages"""
-        # This is kept for compatibility but most logic is now in Pyrogram
+        # Minimal tracker handles message logic in Pyrogram listeners
         pass
     
     async def handle_edited_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,12 +334,8 @@ class LudoBotManager:
     
     async def expire_old_games(self, context: ContextTypes.DEFAULT_TYPE):
         """Expire old games (scheduled job)"""
-        try:
-            expired_games = self.game_manager.expire_old_games(expiry_hours=24)
-            if expired_games:
-                logger.info(f"⏰ Expired {len(expired_games)} old games")
-        except Exception as e:
-            logger.error(f"❌ Error expiring games: {e}")
+        # Not applicable with minimal tracker
+        return
     
     async def periodic_balance_sheet_update(self, context: ContextTypes.DEFAULT_TYPE):
         """Update pinned balance sheet (scheduled job)"""
@@ -412,12 +389,7 @@ class LudoBotManager:
             
             if job_queue:
                 # Schedule game expiration check every 5 minutes
-                job_queue.run_repeating(
-                    callback=self.expire_old_games,
-                    interval=300,  # 5 minutes
-                    first=60,      # Start after 1 minute
-                    name="expire_games"
-                )
+                # Disabled for minimal tracker
                 
                 # Schedule balance sheet update every 5 minutes
                 job_queue.run_repeating(
@@ -435,6 +407,18 @@ class LudoBotManager:
             if self.pyro_manager:
                 print("🚀 Pyrogram client will be started when bot begins polling...")
                 print("✅ Pyrogram handlers configured and ready")
+                # If the low-level client is available, attach the minimal tracker now
+                try:
+                    if getattr(self.pyro_manager, 'pyro_client', None) is not None:
+                        register_pyro_table_tracker(
+                            self.pyro_manager.pyro_client,
+                            int(self.group_id),
+                            self.admin_ids,
+                            database=self.database,
+                            balance_sheet_manager=self.balance_sheet_manager,
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to register minimal tracker: {e}")
             
             print("Bot is running! Press Ctrl+C to stop.")
             
