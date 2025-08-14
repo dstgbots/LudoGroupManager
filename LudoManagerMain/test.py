@@ -110,10 +110,56 @@ def on_admin_edit_message(client, message):
             games[message.id] = game_data
             print("🔄 Game re-added to active games due to handler error")
 
-if __name__ == "__main__":
+def start_with_bot_manager(bot_manager_instance=None):
+    """
+    Start the Pyrogram listener with a specific bot manager instance.
+    This ensures proper integration when run as a module.
+    """
+    if bot_manager_instance:
+        # Store the bot manager instance globally for handlers to use
+        global _bot_manager_instance
+        _bot_manager_instance = bot_manager_instance
+        print("✅ Bot manager instance received and stored")
+    
     print("🚀 Starting LudoManager Pyrogram Listener...")
     print(f"👥 Monitoring group: {GROUP_ID}")
     print(f"🔑 Admin IDs: {ADMIN_IDS}")
     print("📡 Listening for new game tables and winner edits...")
     print("Bot is running...")
+    
+    try:
+        print("🔄 Calling app.run()...")
+        app.run()
+        print("⚠️ app.run() returned - this shouldn't happen unless there was an error")
+    except Exception as e:
+        print(f"❌ Error in app.run(): {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        raise
+
+def start_standalone():
+    """
+    Start the Pyrogram listener in standalone mode.
+    This initializes its own bot manager instance.
+    """
+    print("🚀 Starting LudoManager Pyrogram Listener (Standalone Mode)...")
+    print(f"👥 Monitoring group: {GROUP_ID}")
+    print(f"🔑 Admin IDs: {ADMIN_IDS}")
+    print("📡 Listening for new game tables and winner edits...")
+    
+    # Initialize bot manager for standalone mode
+    try:
+        bot.initialize_bot_manager()
+        print("✅ Bot manager initialized for standalone mode")
+    except Exception as e:
+        print(f"⚠️ Bot manager initialization failed: {e}")
+        print("🔄 Continuing with limited functionality...")
+    
+    print("Bot is running...")
     app.run()
+
+# Global variable to store bot manager instance
+_bot_manager_instance = None
+
+if __name__ == "__main__":
+    start_standalone()
