@@ -1712,35 +1712,7 @@ Good luck! 🎲
         # Process game tables (new functionality)
         await self.detect_and_process_game_table(update, context)
     
-    async def handle_edited_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle edited messages (mainly for game results)"""
-        logger.info(f"🔄 EDIT HANDLER CALLED - Update type: {type(update)}")
-        logger.info(f"🔄 Update object keys: {update.__dict__.keys()}")
-        logger.info(f"🔄 Has edited_message: {hasattr(update, 'edited_message')}")
-        
-        if not update.edited_message:
-            logger.info("❌ No edited_message in update")
-            return
-        
-        if not update.edited_message.text:
-            logger.info("❌ No text in edited_message")
-            return
-        
-        logger.info(f"✅ Edited message received from user {update.effective_user.id}")
-        logger.info(f"📝 Message text: '{update.edited_message.text}'")
-        logger.info(f"🏠 Chat ID: {update.effective_chat.id}")
-        logger.info(f"🔑 Is configured group: {self.is_configured_group(update.effective_chat.id)}")
-        logger.info(f"👑 Is admin: {update.effective_user.id in self.admin_ids}")
-        
-        # In group chat, only process edited messages from admins
-        if self.is_configured_group(update.effective_chat.id):
-            if update.effective_user.id not in self.admin_ids:
-                logger.info("❌ Edited message ignored - not from admin")
-                return  # Ignore non-admin edited messages in group
-        
-        logger.info("🎯 Processing edited message for game results...")
-        # Only process game results for edited messages
-        await self.process_game_result(update, context, is_edit=True)
+    # Removed handle_edited_messages - using only Pyrogram like test.py
     
     async def generate_balance_sheet_content(self) -> str:
         """Generate the balance sheet content with all users and their balances"""
@@ -2887,16 +2859,8 @@ Choose a time period below:
             # Message handler for all text messages
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_all_messages))
             
-            # Handler for edited messages (to detect game results when message is edited)
-            # Using a custom handler for edited messages
-            async def edited_message_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-                if update.edited_message:
-                    await self.handle_edited_messages(update, context)
-            
-            # Add handler for all updates to catch edited messages
-            from telegram.ext import TypeHandler
-            application.add_handler(TypeHandler(Update, edited_message_wrapper))
-            logger.info("✅ Edited message handler added")
+            # Removed Telegram Bot API edited message handler - using only Pyrogram like test.py
+            logger.info("✅ Using only Pyrogram for edited messages (like test.py)")
             
             # Set up job queue for periodic tasks (if available)
             job_queue = application.job_queue
