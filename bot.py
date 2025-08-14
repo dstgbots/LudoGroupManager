@@ -153,13 +153,15 @@ class LudoBotManager:
             return
             
         try:
-            # Define handler functions using test.py logic
+            # Use latest Pyrogram syntax with @Client decorators
+            @self.pyro_client.on_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
             async def on_admin_table_message(client, message):
                 game_data = self.extract_game_data_from_message(message.text)
                 if game_data:
                     self.active_games[message.id] = game_data
                     logger.info(f"🎮 Game created: {game_data}")
             
+            @self.pyro_client.on_edited_message(pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text)
             async def on_admin_edit_message(client, message):
                 winner = self.extract_winner_from_edited_message(message.text)
                 if winner and message.id in self.active_games:
@@ -169,21 +171,6 @@ class LudoBotManager:
                         chat_id=message.chat.id,
                         text=f"🎉 Winner Found: @{winner}\n💰 Prize: {game_data['amount']}"
                     )
-            
-            # Register handlers using add_handler (works across Pyrogram versions)
-            from pyrogram.handlers import MessageHandler
-            self.pyro_client.add_handler(
-                MessageHandler(
-                    on_admin_table_message,
-                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text & ~pyrogram_filters.edited
-                )
-            )
-            self.pyro_client.add_handler(
-                MessageHandler(
-                    on_admin_edit_message,
-                    pyrogram_filters.chat(int(self.group_id)) & pyrogram_filters.user(self.admin_ids) & pyrogram_filters.text & pyrogram_filters.edited
-                )
-            )
             
             logger.info("✅ Pyrogram handlers set up successfully")
             
