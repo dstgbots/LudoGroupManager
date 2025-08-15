@@ -613,17 +613,14 @@ class LudoManagerBot:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # Calculate total pot and commission
+            # Calculate total pot and individual bet amount
             total_pot = game_data['total_amount']
-            commission_rate = 0.1  # 10% commission
-            commission_amount = int(total_pot * commission_rate)
-            winner_amount = total_pot - commission_amount
+            bet_amount = game_data['bet_amount']  # Individual bet amount per player
             
             logger.info(f"💰 Total Pot: ₹{total_pot}")
-            logger.info(f"💼 Commission (10%): ₹{commission_amount}")
-            logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
+            logger.info(f"🎯 Individual Bet Amount: ₹{bet_amount}")
             
-            # Update winner's balance
+            # Update winner's balance with single commission system
             for winner in winners:
                 # CRITICAL FIX: Case-insensitive database lookup
                 username = winner['username']
@@ -639,10 +636,31 @@ class LudoManagerBot:
                 if not user_data:
                     logger.warning(f"⚠️ Winner {username} not found in database")
                     continue
-                    
-                # Update balance
-                new_balance = user_data.get('balance', 0) + winner_amount
                 
+                # Get user's custom commission rate (default to 0 if not set)
+                user_commission_rate = user_data.get('commission_rate', 0)
+                
+                # Calculate commission from opponent's bet amount (not total pot)
+                # Winner gets: their own bet + opponent's bet - commission from opponent's bet
+                opponent_bet_amount = bet_amount * (len(game_data['players']) - 1)  # Total bet from other players
+                commission_amount = int(opponent_bet_amount * user_commission_rate)
+                
+                # Calculate final winnings: own bet + (opponent bet - commission)
+                final_winner_amount = bet_amount + (opponent_bet_amount - commission_amount)
+                
+                # Calculate new balance
+                old_balance = user_data.get('balance', 0)
+                new_balance = old_balance + final_winner_amount
+                
+                logger.info(f"👤 Winner: {username}")
+                logger.info(f"💼 User Commission Rate: {int(user_commission_rate * 100)}%")
+                logger.info(f"🎯 Own Bet: ₹{bet_amount}")
+                logger.info(f"👥 Opponent Bet Total: ₹{opponent_bet_amount}")
+                logger.info(f"💸 Commission: ₹{commission_amount}")
+                logger.info(f"🎉 Final Winnings: ₹{final_winner_amount}")
+                logger.info(f"💰 Balance: ₹{old_balance} → ₹{new_balance}")
+                
+                # Update user balance
                 users_collection.update_one(
                     {'_id': user_data['_id']},
                     {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
@@ -652,10 +670,14 @@ class LudoManagerBot:
                 transaction_data = {
                     'user_id': user_data['user_id'],
                     'type': 'win',
-                    'amount': winner_amount,
-                    'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
+                    'amount': final_winner_amount,
+                    'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount} from opponent bet)',
                     'timestamp': datetime.now(),
-                    'game_id': game_data['game_id']
+                    'game_id': game_data['game_id'],
+                    'own_bet': bet_amount,
+                    'opponent_bet': opponent_bet_amount,
+                    'commission': commission_amount,
+                    'total_commission': commission_amount
                 }
                 transactions_collection.insert_one(transaction_data)
                 
@@ -667,13 +689,20 @@ class LudoManagerBot:
                         int(game_data['admin_message_id'])
                     )
                     
+                    # Prepare commission breakdown message
+                    commission_message = ""
+                    if commission_amount > 0:
+                        commission_message = f"\n💸 <b>Commission Deducted:</b> ₹{commission_amount} ({int(user_commission_rate * 100)}% from opponent bet)"
+                    
                     await self.application.bot.send_message(
                         chat_id=user_data['user_id'],
                         text=(
                             f"🎉 <b>Congratulations! You won!</b>\n\n"
                             f"<b>Game:</b> {game_data['game_id']}\n"
-                            f"<b>Winnings:</b> ₹{winner_amount}\n"
-                            f"<b>New Balance:</b> ₹{new_balance}\n\n"
+                            f"<b>Your Bet:</b> ₹{bet_amount}\n"
+                            f"<b>Opponent Bet Total:</b> ₹{opponent_bet_amount}\n"
+                            f"<b>Final Winnings:</b> ₹{final_winner_amount}\n"
+                            f"<b>New Balance:</b> ₹{new_balance}{commission_message}\n\n"
                             f"📋 <a href='{table_link}'>View Game Table</a>"
                         ),
                         parse_mode="HTML",
@@ -727,6 +756,22 @@ class LudoManagerBot:
                     except Exception as e:
                         logger.error(f"❌ Could not notify loser {player['username']}: {e}")
             
+            # Calculate total commission earned (only user commission)
+            total_commission_earned = 0
+            for winner in winners:
+                username = winner['username']
+                user_data = users_collection.find_one({
+                    '$or': [
+                        {'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}},
+                        {'username': {'$regex': f'^@{re.escape(username)}$', '$options': 'i'}}
+                    ]
+                })
+                if user_data:
+                    user_commission_rate = user_data.get('commission_rate', 0)
+                    opponent_bet_amount = bet_amount * (len(game_data['players']) - 1)
+                    user_commission = int(opponent_bet_amount * user_commission_rate)
+                    total_commission_earned += user_commission
+            
             # Update game status
             games_collection.update_one(
                 {'game_id': game_data['game_id']},
@@ -734,8 +779,9 @@ class LudoManagerBot:
                     '$set': {
                         'status': 'completed',
                         'winner': winners[0]['username'],
-                        'winner_amount': winner_amount,
-                        'admin_fee': commission_amount,
+                        'winner_amount': final_winner_amount,
+                        'admin_fee': total_commission_earned,
+                        'commission': total_commission_earned,
                         'completed_at': datetime.now()
                     }
                 }
