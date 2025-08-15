@@ -35,7 +35,7 @@ try:
     from pymongo.errors import ConnectionFailure
     
     # Replace with your MongoDB connection string
-    MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+    MONGO_URI = os.getenv('MONGO_URI', 'mongodb+srv://rolex1:rolex1@cluster0.wndb12x.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0')
     client = MongoClient(MONGO_URI)
     client.admin.command('ping')
     db = client['ludo_bot']
