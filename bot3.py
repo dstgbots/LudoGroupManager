@@ -127,6 +127,8 @@ class LudoManagerBot:
                 # Find user by username in database
                 user_data = users_collection.find_one({'username': {'$regex': f'^{username}$', '$options': 'i'}})
                 if user_data:
+                    # Add display_name field for consistency
+                    user_data['display_name'] = user_data.get('username', username)
                     logger.info(f"✅ Found user by @mention: {username}")
                     return user_data
                 else:
@@ -142,15 +144,26 @@ class LudoManagerBot:
                     # Check if user exists in database
                     user_data = users_collection.find_one({'user_id': user.id})
                     if user_data:
+                        # Add display_name field for consistency
+                        first_name = user_data.get('first_name', user.first_name)
+                        last_name = user_data.get('last_name', user.last_name)
+                        user_data['display_name'] = f"{first_name}"
+                        if last_name:
+                            user_data['display_name'] += f" {last_name}"
                         logger.info(f"✅ Found existing user by text_mention: {user.first_name}")
                         return user_data
                     else:
                         # Create new user entry
+                        display_name = f"{user.first_name}"
+                        if user.last_name:
+                            display_name += f" {user.last_name}"
+                        
                         new_user_data = {
                             'user_id': user.id,
-                            'username': user.username or user.first_name,
+                            'username': user.username or f"user_{user.id}",
                             'first_name': user.first_name,
                             'last_name': user.last_name,
+                            'display_name': display_name,
                             'is_admin': user.id in self.admin_ids,
                             'last_active': datetime.now(),
                             'balance': 0,
@@ -1890,11 +1903,18 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "Usage: /addbalance @username amount OR /addbalance \"First Name\" amount")
                 return
             
+            # Initialize variables to ensure they're always defined
+            username = None
+            amount = None
+            user_data = None
+            
             # Try to extract user directly from message entities first (most reliable)
             user_data = self._extract_user_from_entities(update.message.entities, update.message.text)
             
             if user_data:
                 logger.info(f"✅ Found user from entities: {user_data.get('first_name', user_data.get('username', 'Unknown'))}")
+                # For entity-based users, use display name or username
+                username = user_data.get('display_name') or user_data.get('username') or user_data.get('first_name', 'Unknown')
             else:
                 # Fallback to parsing command arguments for names with spaces
                 logger.info("🔍 No user found in entities, trying command argument parsing")
@@ -1917,23 +1937,6 @@ class LudoManagerBot:
                 return
             
             if not user_data:
-                                # Get username for error message
-                if update.message.entities:
-                    # Try to get username from entities
-                    for entity in update.message.entities:
-                        if hasattr(entity, 'type') and entity.type == "mention":
-                            username = update.message.text[entity.offset:entity.offset + entity.length].lstrip('@')
-                            break
-                        elif hasattr(entity, 'type') and entity.type == "text_mention":
-                            user = getattr(entity, 'user', None)
-                            if user:
-                                username = user.first_name or f"user_{user.id}"
-                                break
-                    else:
-                        username = "Unknown User"
-                else:
-                    username = "Unknown User"
-                
                 await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
                 
@@ -2023,11 +2026,18 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "Usage: /withdraw @username amount OR /withdraw \"First Name\" amount")
                 return
             
+            # Initialize variables to ensure they're always defined
+            username = None
+            amount = None
+            user_data = None
+            
             # Try to extract user directly from message entities first (most reliable)
             user_data = self._extract_user_from_entities(update.message.entities, update.message.text)
             
             if user_data:
                 logger.info(f"✅ Found user from entities: {user_data.get('first_name', user_data.get('username', 'Unknown'))}")
+                # For entity-based users, use display name or username
+                username = user_data.get('display_name') or user_data.get('username') or user_data.get('first_name', 'Unknown')
             else:
                 # Fallback to parsing command arguments for names with spaces
                 logger.info("🔍 No user found in entities, trying command argument parsing")
@@ -2050,7 +2060,7 @@ class LudoManagerBot:
                 return
             
             if not user_data:
-                await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
+                await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
                 
             # Get current balance and calculate new balance
@@ -2224,11 +2234,18 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "Usage: /setcommission @username percentage OR /setcommission \"First Name\" percentage")
                 return
             
+            # Initialize variables to ensure they're always defined
+            username = None
+            commission_percentage = None
+            user_data = None
+            
             # Try to extract user directly from message entities first (most reliable)
             user_data = self._extract_user_from_entities(update.message.entities, update.message.text)
             
             if user_data:
                 logger.info(f"✅ Found user from entities: {user_data.get('first_name', user_data.get('username', 'Unknown'))}")
+                # For entity-based users, use display name or username
+                username = user_data.get('display_name') or user_data.get('username') or user_data.get('first_name', 'Unknown')
             else:
                 # Fallback to parsing command arguments for names with spaces
                 logger.info("🔍 No user found in entities, trying command argument parsing")
@@ -2254,7 +2271,7 @@ class LudoManagerBot:
             commission_rate = commission_percentage / 100
             
             if not user_data:
-                await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
+                await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
                 
             # Update commission rate (store as decimal)
