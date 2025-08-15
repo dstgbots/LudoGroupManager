@@ -253,14 +253,14 @@ class LudoManagerBot:
     def _extract_winner_from_edited_message(self, message_text: str) -> Optional[str]:
         """Extract winner username from edited message text with proper error handling"""
         try:
-            # Look for username with ✅ mark using multiple patterns
+            # Look for username with ✅ mark using multiple patterns (support multiple ✅ marks)
             patterns = [
-                r'@([a-zA-Z0-9_]+)\s*✅',  # Username + space + checkmark
-                r'@([a-zA-Z0-9_]+)✅',     # Username + checkmark (no space)
-                r'@([a-zA-Z0-9_]+).*?✅',  # Username + anything + checkmark
-                r'✅.*?@([a-zA-Z0-9_]+)',  # Checkmark + anything + username
-                r'([a-zA-Z0-9_]+)\s*✅',   # Just username (no @) + checkmark
-                r'([a-zA-Z0-9_]+)✅',      # Just username (no @) + checkmark (no space)
+                r'@([a-zA-Z0-9_]+)\s*✅+',  # Username + space + one or more checkmarks
+                r'@([a-zA-Z0-9_]+)✅+',     # Username + one or more checkmarks (no space)
+                r'@([a-zA-Z0-9_]+).*?✅+',  # Username + anything + one or more checkmarks
+                r'✅+.*?@([a-zA-Z0-9_]+)',  # One or more checkmarks + anything + username
+                r'([a-zA-Z0-9_]+)\s*✅+',   # Just username (no @) + one or more checkmarks
+                r'([a-zA-Z0-9_]+)✅+',      # Just username (no @) + one or more checkmarks (no space)
             ]
             
             for pattern in patterns:
@@ -296,12 +296,18 @@ class LudoManagerBot:
             for line in lines:
                 logger.debug(f"🔍 Processing line: {line}")
                 
-                # Look for amount with "Full" keyword
+                # Look for amount with "Full" keyword (support both regular numbers and k format)
                 if "full" in line.lower():
-                    match = re.search(r"(\d+)\s*[Ff]ull", line)
+                    # Support both formats: "1000 Full", "1k Full", "10k Full", etc.
+                    match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", line)
                     if match:
-                        amount = int(match.group(1))
-                        logger.info(f"💰 Amount found: {amount}")
+                        amount_str = match.group(1)
+                        # Convert k format to actual number
+                        if amount_str.lower().endswith('k'):
+                            amount = int(amount_str[:-1]) * 1000
+                        else:
+                            amount = int(amount_str)
+                        logger.info(f"💰 Amount found: {amount_str} = ₹{amount}")
                 else:
                     # Extract username with or without @
                     match = re.search(r"@?([a-zA-Z0-9_]+)", line)
@@ -436,9 +442,9 @@ class LudoManagerBot:
             elif len(set(usernames)) != len(usernames):
                 rejection_message = "❌ **Duplicate Username Detected!**\n\nYou cannot play against yourself.\n\nPlease send a table with 2 different usernames and amount."
             elif not amount:
-                rejection_message = "❌ **Invalid Amount!**\n\nNo valid amount found in the table.\n\nPlease send a table with exactly 2 different usernames and amount."
+                rejection_message = "❌ **Invalid Amount!**\n\nNo valid amount found in the table.\n\nPlease send a table with exactly 2 different usernames and amount.\n\n**Supported formats:** 1000, 2000, 1k, 2k, 10k, 50k"
             else:
-                rejection_message = "❌ **Invalid Table Format!**\n\nPlease send a table with exactly 2 different usernames and amount."
+                rejection_message = "❌ **Invalid Table Format!**\n\nPlease send a table with exactly 2 different usernames and amount.\n\n**Supported formats:** 1000, 2000, 1k, 2k, 10k, 50k"
             
             # Send rejection message to group
             message = await context.bot.send_message(
@@ -538,11 +544,9 @@ class LudoManagerBot:
                             chat_id=user_data['user_id'],
                             text=(
                                 f"🎮 <b>Game Joined!</b>\n\n"
-                                f"<b>Game ID:</b> {game_data['game_id']}\n"
-                                f"<b>Bet Amount:</b> ₹{bet_amount}\n"
-                                f"<b>Old Balance:</b> ₹{old_balance}\n"
-                                f"<b>New Balance:</b> ₹{new_balance}\n\n"
-                                f"📋 <a href='{table_link}'>View Game Table</a>\n\n"
+                                f"💰 <b>Bet Amount:</b> ₹{bet_amount}\n"
+                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
                                 f"Good luck! 🍀"
                             ),
                             parse_mode="HTML",
@@ -777,12 +781,10 @@ class LudoManagerBot:
                         chat_id=user_data['user_id'],
                         text=(
                             f"🎉 <b>Congratulations! You won!</b>\n\n"
-                            f"<b>Game:</b> {game_data['game_id']}\n"
-                            f"<b>Your Bet:</b> ₹{bet_amount}\n"
-                            f"<b>Opponent Bet Total:</b> ₹{opponent_bet_amount}\n"
-                            f"<b>Final Winnings:</b> ₹{final_winner_amount}\n"
-                            f"<b>New Balance:</b> ₹{new_balance}{commission_message}\n\n"
-                            f"📋 <a href='{table_link}'>View Game Table</a>"
+                            f"💰 <b>Amount Credited:</b> ₹{final_winner_amount}\n\n"
+                            f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                            f"💸 <a href='https://telegram.me/SOMYA_000'>Click to instant Withdraw</a>\n\n"
+                            f"🔍 <a href='{table_link}'>View Table</a>"
                         ),
                         parse_mode="HTML",
                         disable_web_page_preview=True
@@ -818,13 +820,8 @@ class LudoManagerBot:
                                 chat_id=loser_data['user_id'],
                                 text=(
                                     f"😔 <b>Game Result</b>\n\n"
-                                    f"Unfortunately, you didn't win this time.\n\n"
-                                    f"<b>Game:</b> {game_data['game_id']}\n"
-                                    f"<b>Bet Amount:</b> ₹{player['bet_amount']}\n"
-                                    f"<b>Winner:</b> @{winners[0]['username']}\n"
-                                    f"<b>Your Balance:</b> ₹{current_balance}\n\n"
-                                    f"📋 <a href='{table_link}'>View Game Table</a>\n\n"
-                                    f"Better luck next time! 🍀"
+                                    f"You Lose ₹{player['bet_amount']} Amount in this match\n\n"
+                                    f"🔍 <a href='{table_link}'>View Table</a>"
                                 ),
                                 parse_mode="HTML",
                                 disable_web_page_preview=True
@@ -1074,6 +1071,9 @@ class LudoManagerBot:
             "@player1\n"
             "@player2\n"
             "400 Full\n\n"
+            "**Amount formats supported:**\n"
+            "• Regular: 1000, 2000, 5000\n"
+            "• K format: 1k, 2k, 5k, 10k, 50k\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/activegames - Show all currently running games\n"
@@ -1470,10 +1470,9 @@ class LudoManagerBot:
                                 chat_id=user_data['user_id'],
                                 text=(
                                     f"⌛ <b>Game Expired & Refunded</b>\n\n"
-                                    f"Your game exceeded the 1-hour limit and has been automatically cancelled.\n\n"
-                                    f"<b>Refund Amount:</b> ₹{refund_amount}\n"
-                                    f"<b>New Balance:</b> ₹{new_balance}\n\n"
-                                    f"📋 <a href='{table_link}'>View Game Table</a>"
+                                    f"💰 <b>Refund Amount:</b> ₹{refund_amount}\n"
+                                    f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                    f"🔍 <a href='{table_link}'>View Game Table</a>"
                                 ),
                                 parse_mode="HTML",
                                 disable_web_page_preview=True
@@ -1765,11 +1764,9 @@ class LudoManagerBot:
                             chat_id=user_data['user_id'],
                             text=(
                                 f"🚫 <b>Game Cancelled & Refunded</b>\n\n"
-                                f"Your game has been cancelled by an admin.\n\n"
-                                f"<b>Game:</b> {game_data['game_id']}\n"
-                                f"<b>Refund Amount:</b> ₹{bet_amount}\n"
-                                f"<b>New Balance:</b> ₹{new_balance}\n\n"
-                                f"📋 <a href='{table_link}'>View Game Table</a>"
+                                f"💰 <b>Refund Amount:</b> ₹{bet_amount}\n"
+                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"🔍 <a href='{table_link}'>View Game Table</a>"
                             ),
                             parse_mode="HTML",
                             disable_web_page_preview=True
