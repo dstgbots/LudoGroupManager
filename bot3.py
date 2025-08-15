@@ -603,15 +603,18 @@ class LudoManagerBot:
                 'first_name': user.first_name,
                 'last_name': user.last_name,
                 'is_admin': user.id in self.admin_ids,
-                'created_at': datetime.now(),
                 'last_active': datetime.now(),
                 'balance': 0
+                # REMOVED created_at from here - it's only set on insert
             }
             
             # Update or insert user
             users_collection.update_one(
                 {'user_id': user.id},
-                {'$set': user_data, '$setOnInsert': {'created_at': datetime.now()}},
+                {
+                    '$set': user_data,
+                    '$setOnInsert': {'created_at': datetime.now()}  # Only set on insert
+                },
                 upsert=True
             )
             
@@ -628,12 +631,19 @@ class LudoManagerBot:
                 "Use /help for more commands."
             )
             
-            await update.message.reply_text(welcome_msg, parse_mode="markdown")
-            
+            if is_group:
+                await self.send_group_response(update, context, welcome_msg)
+            else:
+                await update.message.reply_text(welcome_msg, parse_mode="markdown")
+                
         except Exception as e:
             logger.error(f"❌ Error in start command: {e}")
-            await update.message.reply_text("❌ An error occurred. Please try again.")
-
+            error_msg = "❌ Sorry, there was an error setting up your account. Please try again later."
+            if is_group:
+                await self.send_group_response(update, context, error_msg)
+            else:
+                await update.message.reply_text(error_msg)
+            
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         is_admin = update.effective_user.id in self.admin_ids
