@@ -1060,6 +1060,8 @@ class LudoManagerBot:
         # Command handlers
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("help", self.help_command))
+        application.add_handler(CommandHandler("ping", self.ping_command))
+        application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("balance", self.balance_command))
         application.add_handler(CommandHandler("addbalance", self.addbalance_command))
         application.add_handler(CommandHandler("withdraw", self.withdraw_command))
@@ -1192,6 +1194,49 @@ class LudoManagerBot:
             else:
                 await update.message.reply_text(error_msg)
             
+    async def ping_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /ping command - simple health check"""
+        user = update.effective_user
+        user_id = user.id
+        username = user.username or user.first_name
+        is_admin = user_id in self.admin_ids
+        
+        message = (
+            f"🏓 **Pong!**\n\n"
+            f"✅ Bot is running\n"
+            f"👤 **User:** @{username}\n"
+            f"🆔 **ID:** `{user_id}`\n"
+            f"👑 **Admin:** {'Yes' if is_admin else 'No'}\n"
+            f"🔍 **Admin IDs:** {self.admin_ids}\n"
+            f"⏰ **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        
+        if self.is_configured_group(update.effective_chat.id):
+            await self.send_group_response(update, context, message)
+        else:
+            await update.message.reply_text(message, parse_mode="HTML")
+
+    async def myid_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /myid command - shows user's Telegram ID"""
+        user = update.effective_user
+        user_id = user.id
+        username = user.username or user.first_name
+        is_admin = user_id in self.admin_ids
+        
+        message = (
+            f"👤 **Your Information:**\n\n"
+            f"🆔 **User ID:** `{user_id}`\n"
+            f"👤 **Username:** @{username}\n"
+            f"👑 **Admin Status:** {'✅ Yes' if is_admin else '❌ No'}\n"
+            f"🔍 **Admin IDs in bot:** {self.admin_ids}\n\n"
+            f"💡 **Tip:** If you're not an admin, add your ID ({user_id}) to the ADMIN_IDS list in the bot code."
+        )
+        
+        if self.is_configured_group(update.effective_chat.id):
+            await self.send_group_response(update, context, message)
+        else:
+            await update.message.reply_text(message, parse_mode="HTML")
+
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         is_admin = update.effective_user.id in self.admin_ids
@@ -1202,10 +1247,12 @@ class LudoManagerBot:
             help_message = (
                 "🎮 Ludo Group Manager Bot\n\n"
                 "This bot helps manage Ludo games in the group.\n\n"
-                "📌 *Available Commands:*\n"
-                "/start - Create your account\n"
-                "/balance - Check your balance\n"
-                "/help - Show this help message\n\n"
+                            "📌 *Available Commands:*\n"
+            "/ping - Check if bot is running\n"
+            "/start - Create your account\n"
+            "/balance - Check your balance\n"
+            "/myid - Show your Telegram ID\n"
+            "/help - Show this help message\n\n"
                 "⚠️ Note: Only admins can create games and manage balances."
             )
             await self.send_group_response(update, context, help_message)
@@ -1241,6 +1288,8 @@ class LudoManagerBot:
             "• Uses Telegram's native mention system\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
+            "/ping - Check if bot is running\n"
+            "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
             "/addbalance @username amount - Add balance to user\n"
             "/withdraw @username amount - Withdraw from user\n"
@@ -1297,8 +1346,15 @@ class LudoManagerBot:
 
     async def addbalance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /addbalance command"""
-        if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+        # Debug logging for admin check
+        user_id = update.effective_user.id
+        username = update.effective_user.username or update.effective_user.first_name
+        logger.info(f"🔍 Admin check - User ID: {user_id}, Username: {username}")
+        logger.info(f"🔍 Admin check - Admin IDs: {self.admin_ids}")
+        logger.info(f"🔍 Admin check - Is admin: {user_id in self.admin_ids}")
+        
+        if user_id not in self.admin_ids:
+            await self.send_group_response(update, context, f"❌ Only admins can use this command. Your ID: {user_id}")
             return
             
         try:
@@ -2357,6 +2413,13 @@ async def main():
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
     GROUP_ID = -1002849354155
     ADMIN_IDS = [2109516065]
+    
+    print(f"🚀 Starting Ludo Manager Bot...")
+    print(f"🔑 Bot Token: {BOT_TOKEN[:20]}...")
+    print(f"📱 API ID: {API_ID}")
+    print(f"🔐 API Hash: {API_HASH[:20]}...")
+    print(f"👥 Group ID: {GROUP_ID}")
+    print(f"👑 Admin IDs: {ADMIN_IDS}")
     
     # Create and start the bot
     bot = LudoManagerBot(BOT_TOKEN, API_ID, API_HASH, GROUP_ID, ADMIN_IDS)
