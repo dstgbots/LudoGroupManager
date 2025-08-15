@@ -1177,7 +1177,7 @@ class LudoManagerBot:
             winner_amount = total_pot - commission_amount
             
             logger.info(f"💰 Total Pot: ₹{total_pot}")
-            logger.info(f"💼 Commission (10%): ₹{commission_amount}")
+            logger.info(f"💼 Commission : ₹{commission_amount}")
             logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
             
             # Update winner's balance
@@ -1249,7 +1249,7 @@ class LudoManagerBot:
                             text=(
                                 f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n\n"
                                 f"📊 <b>Updated Balance: ₹{new_balance}</b>\n\n"
-                                f"💸 Click to instant Withdraw (https://telegram.me/SOMYA_000)\n\n"
+                                f"💸 Click to instant Withdraw(https://telegram.me/SOMYA_000)\n\n"
                                 f"🔍 <a href='{table_link}'>View Table</a> 👈"
                             ),
                             parse_mode="HTML",
@@ -2113,30 +2113,19 @@ class LudoManagerBot:
             # Update balance sheet
             await self.update_balance_sheet(context)
             
-            # Notify user with detailed breakdown
+            # Notify user with simple, clean message
             try:
-                if old_balance < 0:
+                if new_balance < 0:
                     user_notification = (
-                        f"💸 **Withdrawal Notice**\n\n"
-                        f"₹{amount} has been withdrawn from your account by admin.\n\n"
-                        f"📊 **Breakdown:**\n"
-                        f"• Previous Balance: -₹{abs(old_balance)} (Debt)\n"
-                        f"• Amount Withdrawn: ₹{amount}\n"
-                        f"• New Balance: -₹{abs(new_balance)} (Debt)\n\n"
-                        f"⚠️ **You now have a debt of ₹{abs(new_balance)}**"
+                        f"💸 <b>Amount Withdrawn: ₹{amount}</b>\n\n"
+                        f"📊 <b>New Balance: -₹{abs(new_balance)}</b>\n\n"
+                        f"⚠️ You now have a debt of ₹{abs(new_balance)}"
                     )
                 else:
                     user_notification = (
-                        f"💸 **Withdrawal Notice**\n\n"
-                        f"₹{amount} has been withdrawn from your account by admin.\n\n"
-                        f"📊 **Breakdown:**\n"
-                        f"• Previous Balance: ₹{old_balance}\n"
-                        f"• Amount Withdrawn: ₹{amount}\n"
-                        f"• New Balance: ₹{new_balance}"
+                        f"💸 <b>Amount Withdrawn: ₹{amount}</b>\n\n"
+                        f"📊 <b>New Balance: ₹{new_balance}</b>"
                     )
-                
-                if new_balance < 0:
-                    user_notification += f"\n\n⚠️ **You now have a debt of ₹{abs(new_balance)}**"
                 
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
