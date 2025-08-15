@@ -2225,7 +2225,7 @@ async def main():
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
     GROUP_ID = -1002849354155
-    ADMIN_IDS = [2109516065]
+    ADMIN_IDS = [2109516065, 739290618]
     
     # Create and start the bot
     bot = LudoManagerBot(BOT_TOKEN, API_ID, API_HASH, GROUP_ID, ADMIN_IDS)
