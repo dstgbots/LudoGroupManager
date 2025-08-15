@@ -889,147 +889,79 @@ class LudoManagerBot:
             logger.error(f"❌ Error sending winner selection to admin: {e}")
             logger.error(f"❌ Full error details: {str(e)}")
     
-    async def process_game_result_from_winner(self, game_data: Dict, winners: List[Dict], message: Optional[Message] = None):
+    async def process_game_result_from_winner(self, game_ Dict, winners: List[Dict], message: Optional[Message] = None):
         """Process game results when winner is determined"""
         try:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # Calculate total pot and individual bet amount
+            # Calculate total pot and commission
             total_pot = game_data['total_amount']
-            bet_amount = game_data['bet_amount']  # Individual bet amount per player
+            commission_rate = 0.1  # 10% commission
+            commission_amount = int(total_pot * commission_rate)
+            winner_amount = total_pot - commission_amount
             
             logger.info(f"💰 Total Pot: ₹{total_pot}")
-            logger.info(f"🎯 Individual Bet Amount: ₹{bet_amount}")
+            logger.info(f"💼 Commission (10%): ₹{commission_amount}")
+            logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
             
-            # Update winner's balance with single commission system
+            # Update winner's balance
             for winner in winners:
-                # CRITICAL FIX: Case-insensitive database lookup
+                # CRITICAL FIX: Comprehensive user resolution
                 username = winner['username']
                 
-                # Use the new user mention resolver
-                user_data = await self._resolve_user_mention(username, None)
+                # First try to find by username
+                user_data = users_collection.find_one({'username': username})
                 
-                if not user_data:
-                    logger.warning(f"⚠️ Winner {username} not found in database")
-                    continue
+                # If not found, try case-insensitive match
+                if not user_
+                    user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                
+                # If still not found, try first name match
+                if not user_
+                    user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                
+                # If still not found, try by user ID if it's numeric
+                if not user_data and username.isdigit():
+                    user_data = users_collection.find_one({'user_id': int(username)})
+                
+                if user_
+                    # Update balance
+                    new_balance = user_data.get('balance', 0) + winner_amount
                     
-                # Get user's custom commission rate (default to 0 if not set)
-                user_commission_rate = user_data.get('commission_rate', 0)
-                
-                # Calculate commission from opponent's bet amount (not total pot)
-                # Winner gets: their own bet + opponent's bet - commission from opponent's bet
-                opponent_bet_amount = bet_amount * (len(game_data['players']) - 1)  # Total bet from other players
-                commission_amount = int(opponent_bet_amount * user_commission_rate)
-                
-                # Calculate final winnings: own bet + (opponent bet - commission)
-                final_winner_amount = bet_amount + (opponent_bet_amount - commission_amount)
-                
-                # Calculate new balance
-                old_balance = user_data.get('balance', 0)
-                new_balance = old_balance + final_winner_amount
-                
-                logger.info(f"👤 Winner: {username}")
-                logger.info(f"💼 User Commission Rate: {int(user_commission_rate * 100)}%")
-                logger.info(f"🎯 Own Bet: ₹{bet_amount}")
-                logger.info(f"👥 Opponent Bet Total: ₹{opponent_bet_amount}")
-                logger.info(f"💸 Commission: ₹{commission_amount}")
-                logger.info(f"🎉 Final Winnings: ₹{final_winner_amount}")
-                logger.info(f"💰 Balance: ₹{old_balance} → ₹{new_balance}")
-                
-                # Update user balance
-                users_collection.update_one(
-                    {'_id': user_data['_id']},
-                    {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
-                )
-                
-                # Record winning transaction
-                transaction_data = {
-                    'user_id': user_data['user_id'],
-                    'type': 'win',
-                    'amount': final_winner_amount,
-                    'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount} from opponent bet)',
-                    'timestamp': datetime.now(),
-                    'game_id': game_data['game_id'],
-                    'own_bet': bet_amount,
-                    'opponent_bet': opponent_bet_amount,
-                    'commission': commission_amount,
-                    'total_commission': commission_amount
-                }
-                transactions_collection.insert_one(transaction_data)
-                
-                # Notify winner
-                try:
-                    # Generate link to the original game table message
-                    table_link = self._generate_message_link(
-                        game_data['chat_id'], 
-                        int(game_data['admin_message_id'])
+                    users_collection.update_one(
+                        {'_id': user_data['_id']},
+                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
                     )
                     
-                    # Prepare commission breakdown message
-                    commission_message = ""
-                    if commission_amount > 0:
-                        commission_message = f"\n💸 <b>Commission Deducted:</b> ₹{commission_amount} ({int(user_commission_rate * 100)}% from opponent bet)"
+                    # Record winning transaction
+                    transaction_data = {
+                        'user_id': user_data['user_id'],
+                        'type': 'win',
+                        'amount': winner_amount,
+                        'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
+                        'timestamp': datetime.now(),
+                        'game_id': game_data['game_id']
+                    }
+                    transactions_collection.insert_one(transaction_data)
                     
-                    await self.application.bot.send_message(
-                        chat_id=user_data['user_id'],
-                        text=(
-                            f"💰 <b>Amount Credited:</b> ₹{final_winner_amount}\n\n"
-                            f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
-                            f"💸 <a href='https://telegram.me/SOMYA_000'>Click to instant Withdraw</a>\n\n"
-                            f"🔍 <a href='{table_link}'>View Table</a>"
-                        ),
-                        parse_mode="HTML",
-                        disable_web_page_preview=True
-                    )
-                    logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
-                except Exception as e:
-                    logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
-            
-            # Notify losers
-            winner_usernames = [w['username'] for w in winners]
-            for player in game_data['players']:
-                if player['username'] not in winner_usernames:
-                    # This player lost
+                    # Notify winner
                     try:
-                        # Find user data for loser
-                        loser_data = await self._resolve_user_mention(player["username"], None)
-                        
-                        if loser_data:
-                            current_balance = loser_data.get('balance', 0)
-                            
-                            # Generate link to the original game table message
-                            table_link = self._generate_message_link(
-                                game_data['chat_id'], 
-                                int(game_data['admin_message_id'])
-                            )
-                            
-                            await self.application.bot.send_message(
-                                chat_id=loser_data['user_id'],
-                                text=(
-                                    f"😔 <b>Game Result</b>\n\n"
-                                    f"You Lose ₹{player['bet_amount']} Amount in this match\n\n"
-                                    f"🔍 <a href='{table_link}'>View Table</a>"
-                                ),
-                                parse_mode="HTML",
-                                disable_web_page_preview=True
-                            )
-                            logger.info(f"✅ Loser notification sent to {loser_data['user_id']}")
-                        else:
-                            logger.warning(f"⚠️ Loser {player['username']} not found in database")
+                        await self.application.bot.send_message(
+                            chat_id=user_data['user_id'],
+                            text=(
+                                f"🎉 *Congratulations! You won!*\n\n"
+                                f"*Game:* {game_data['game_id']}\n"
+                                f"*Winnings:* ₹{winner_amount}\n"
+                                f"*New Balance:* ₹{new_balance}"
+                            ),
+                            parse_mode="MarkdownV2"
+                        )
+                        logger.info(f"✅ Notification sent to winner {user_data['user_id']}")
                     except Exception as e:
-                        logger.error(f"❌ Could not notify loser {player['username']}: {e}")
-            
-            # Calculate total commission earned (only user commission)
-            total_commission_earned = 0
-            for winner in winners:
-                username = winner['username']
-                user_data = await self._resolve_user_mention(username, None)
-                if user_data:
-                    user_commission_rate = user_data.get('commission_rate', 0)
-                    opponent_bet_amount = bet_amount * (len(game_data['players']) - 1)
-                    user_commission = int(opponent_bet_amount * user_commission_rate)
-                    total_commission_earned += user_commission
+                        logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
+                else:
+                    logger.warning(f"⚠️ Winner {username} not found in database")
             
             # Update game status
             games_collection.update_one(
@@ -1038,41 +970,35 @@ class LudoManagerBot:
                     '$set': {
                         'status': 'completed',
                         'winner': winners[0]['username'],
-                        'winner_amount': final_winner_amount,
-                        'admin_fee': total_commission_earned,
-                        'commission': total_commission_earned,
+                        'winner_amount': winner_amount,
+                        'admin_fee': commission_amount,
                         'completed_at': datetime.now()
                     }
                 }
             )
             
-            # Notify group - DISABLED: No group notification needed
-            # try:
-            #     group_message = (
-            #         f"🎉 <b>GAME COMPLETED!</b>\n\n"
-            #         f"🏆 <b>Winner:</b> @{winners[0]['username']}\n"
-            #         f"💰 <b>Winnings:</b> ₹{winner_amount}\n"
-            #         f"💼 <b>Commission:</b> ₹{commission_amount}\n"
-            #         f"🆔 <b>Game ID:</b> {game_data['game_id']}"
-            #     )
-            #     
-            #     await self.application.bot.send_message(
-            #         chat_id=int(self.group_id),
-            #         text=group_message,
-            #         parse_mode="HTML"
-            #     )
-            #     logger.info("✅ Game completion notification sent to group")
-            # except Exception as e:
-            #     logger.error(f"❌ Could not send completion message to group: {e}")
-            
-            logger.info("ℹ️ Group notifications disabled - only DM notifications sent")
-            
-            # Update balance sheet after game completion
+            # Notify group
             try:
-                await self.update_balance_sheet(None)
-                logger.info("✅ Balance sheet updated after game completion")
+                # Format winner name - use first name if available
+                winner_info = users_collection.find_one({'username': winners[0]['username']})
+                display_name = winner_info['first_name'] if winner_info and 'first_name' in winner_info else winners[0]['username']
+                
+                group_message = (
+                    f"🎉 *GAME COMPLETED!*\n\n"
+                    f"🏆 *Winner:* {display_name}\n"
+                    f"💰 *Winnings:* ₹{winner_amount}\n"
+                    f"💼 *Commission:* ₹{commission_amount}\n"
+                    f"🆔 *Game ID:* {game_data['game_id']}"
+                )
+                
+                await self.application.bot.send_message(
+                    chat_id=int(self.group_id),
+                    text=group_message,
+                    parse_mode="MarkdownV2"
+                )
+                logger.info("✅ Completion message sent to group")
             except Exception as e:
-                logger.error(f"❌ Error updating balance sheet after game completion: {e}")
+                logger.error(f"❌ Could not send completion message to group: {e}")
             
             logger.info("✅ Game result processed successfully")
             
