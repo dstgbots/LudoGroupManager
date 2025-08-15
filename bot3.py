@@ -950,7 +950,7 @@ class LudoManagerBot:
             "/activegames - Show all currently running games\n"
             "/addbalance @username amount - Add balance to user\n"
             "/withdraw @username amount - Withdraw from user\n"
-            "/setcommission @username rate - Set custom commission rate\n"
+            "/setcommission @username percentage - Set custom commission rate (e.g., 10 for 10%)\n"
             "/expiregames - Manually expire old games"
         )
         
@@ -1198,15 +1198,18 @@ class LudoManagerBot:
             
         try:
             if len(context.args) != 2:
-                await self.send_group_response(update, context, "Usage: /setcommission @username rate")
+                await self.send_group_response(update, context, "Usage: /setcommission @username percentage (e.g., /setcommission @user 10 for 10%)")
                 return
                 
             username = context.args[0].replace('@', '')
-            commission_rate = float(context.args[1])
+            commission_percentage = float(context.args[1])
             
-            if commission_rate < 0 or commission_rate > 1:
-                await self.send_group_response(update, context, "❌ Commission rate must be between 0 and 1 (e.g., 0.1 for 10%)")
+            if commission_percentage < 0 or commission_percentage > 100:
+                await self.send_group_response(update, context, "❌ Commission rate must be between 0 and 100 (e.g., 10 for 10%, 100 for 100%)")
                 return
+                
+            # Convert percentage to decimal for storage (10% = 0.1)
+            commission_rate = commission_percentage / 100
                 
             # Find user
             user_data = users_collection.find_one({'username': username})
@@ -1215,19 +1218,19 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
                 return
                 
-            # Update commission rate
+            # Update commission rate (store as decimal)
             users_collection.update_one(
                 {'user_id': user_data['user_id']},
                 {'$set': {'commission_rate': commission_rate}}
             )
             
             # Format rate for display
-            display_rate = f"{int(commission_rate * 100)}%"
+            display_rate = f"{int(commission_percentage)}%"
             
             await self.send_group_response(update, context, f"✅ Commission rate set to {display_rate} for @{username}")
             
         except ValueError:
-            await self.send_group_response(update, context, "❌ Invalid rate. Please enter a number between 0 and 1.")
+            await self.send_group_response(update, context, "❌ Invalid rate. Please enter a number between 0 and 100 (e.g., 10 for 10%).")
         except Exception as e:
             logger.error(f"Error in set_commission_command: {e}")
             await self.send_group_response(update, context, f"❌ Error setting commission rate: {str(e)}")
