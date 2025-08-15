@@ -11,7 +11,16 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pyrogram
 from pyrogram import Client, filters as pyrogram_filters
-from pyrogram.types import Message, MessageEntityMention, MessageEntityMentionName
+from pyrogram.types import Message, MessageEntity
+
+# Try to import Pyrogram enums, fallback to string constants if not available
+try:
+    from pyrogram.enums import MessageEntityType
+    PYROGRAM_ENUMS_AVAILABLE = True
+    logger.info("✅ Pyrogram enums available")
+except ImportError:
+    PYROGRAM_ENUMS_AVAILABLE = False
+    logger.warning("⚠️ Pyrogram enums not available, using string constants")
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -181,15 +190,19 @@ class LudoManagerBot:
                 logger.debug("No message entities found, falling back to regex parsing")
                 return self._extract_mentions_with_regex(message_text)
             
+            logger.debug(f"🔍 Processing {len(message_entities)} message entities")
+            
             for entity in message_entities:
-                # Handle @username mentions
-                if hasattr(entity, 'type') and entity.type == 'mention':
+                logger.debug(f"🔍 Entity: {entity} | Type: {getattr(entity, 'type', 'unknown')}")
+                
+                # Handle @username mentions (MessageEntity.MENTION)
+                if hasattr(entity, 'type') and (entity.type == MessageEntityType.MENTION or entity.type == 'mention'):
                     mention_text = message_text[entity.offset:entity.offset + entity.length]
                     mentions.append(mention_text)
                     logger.debug(f"Found @mention: {mention_text}")
                 
-                # Handle direct user mentions (when someone taps on a contact)
-                elif hasattr(entity, 'type') and entity.type == 'text_mention':
+                # Handle direct user mentions (when someone taps on a contact) (MessageEntity.TEXT_MENTION)
+                elif hasattr(entity, 'type') and (entity.type == MessageEntityType.TEXT_MENTION or entity.type == 'text_mention'):
                     if hasattr(entity, 'user') and entity.user:
                         user = entity.user
                         # Create user entry if not exists
@@ -218,6 +231,10 @@ class LudoManagerBot:
                         mentions.append(mention_text)
                         logger.info(f"✅ Created/updated user from text_mention: {user.first_name}")
                         logger.debug(f"Found text_mention: {mention_text}")
+                
+                # Debug: log all entity types we encounter
+                else:
+                    logger.debug(f"🔍 Unhandled entity type: {getattr(entity, 'type', 'unknown')}")
             
             if not mentions:
                 logger.debug("No entities found, falling back to regex parsing")
