@@ -63,6 +63,10 @@ class LudoManagerBot:
         # Pyrogram client will be initialized later
         self.pyro_client = None
         
+        # Balance sheet management
+        self.pinned_balance_msg_id = None
+        self._load_pinned_message_id()
+        
         # Check if Pyrogram is available
         self.pyrogram_available = True
         try:
@@ -82,6 +86,9 @@ class LudoManagerBot:
             
             # Create the Application and pass it your bot's token
             application = Application.builder().token(self.bot_token).build()
+            
+            # Store application for use in other methods
+            self.application = application
             
             # Initialize Pyrogram in the main event loop (CRITICAL FIX)
             if self.pyrogram_available:
@@ -487,15 +494,51 @@ class LudoManagerBot:
                     await self.application.bot.send_message(
                         chat_id=user_data['user_id'],
                         text=(
-                            f"🎉 *Congratulations! You won!*\n\n"
-                            f"*Game:* {game_data['game_id']}\n"
-                            f"*Winnings:* ₹{winner_amount}\n"
-                            f"*New Balance:* ₹{new_balance}"
+                            f"🎉 <b>Congratulations! You won!</b>\n\n"
+                            f"<b>Game:</b> {game_data['game_id']}\n"
+                            f"<b>Winnings:</b> ₹{winner_amount}\n"
+                            f"<b>New Balance:</b> ₹{new_balance}"
                         ),
-                        parse_mode="MarkdownV2"
+                        parse_mode="HTML"
                     )
+                    logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
                 except Exception as e:
                     logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
+            
+            # Notify losers
+            winner_usernames = [w['username'] for w in winners]
+            for player in game_data['players']:
+                if player['username'] not in winner_usernames:
+                    # This player lost
+                    try:
+                        # Find user data for loser
+                        loser_data = users_collection.find_one({
+                            '$or': [
+                                {'username': {'$regex': f'^{re.escape(player["username"])}$', '$options': 'i'}},
+                                {'username': {'$regex': f'^@{re.escape(player["username"])}$', '$options': 'i'}}
+                            ]
+                        })
+                        
+                        if loser_data:
+                            current_balance = loser_data.get('balance', 0)
+                            await self.application.bot.send_message(
+                                chat_id=loser_data['user_id'],
+                                text=(
+                                    f"😔 <b>Game Result</b>\n\n"
+                                    f"Unfortunately, you didn't win this time.\n\n"
+                                    f"<b>Game:</b> {game_data['game_id']}\n"
+                                    f"<b>Bet Amount:</b> ₹{player['bet_amount']}\n"
+                                    f"<b>Winner:</b> @{winners[0]['username']}\n"
+                                    f"<b>Your Balance:</b> ₹{current_balance}\n\n"
+                                    f"Better luck next time! 🍀"
+                                ),
+                                parse_mode="HTML"
+                            )
+                            logger.info(f"✅ Loser notification sent to {loser_data['user_id']}")
+                        else:
+                            logger.warning(f"⚠️ Loser {player['username']} not found in database")
+                    except Exception as e:
+                        logger.error(f"❌ Could not notify loser {player['username']}: {e}")
             
             # Update game status
             games_collection.update_one(
@@ -511,24 +554,31 @@ class LudoManagerBot:
                 }
             )
             
-            # CRITICAL FIX: Use self.application.bot instead of context
             # Notify group
             try:
                 group_message = (
-                    f"🎉 *GAME COMPLETED!*\n\n"
-                    f"🏆 *Winner:* @{winners[0]['username']}\n"
-                    f"💰 *Winnings:* ₹{winner_amount}\n"
-                    f"💼 *Commission:* ₹{commission_amount}\n"
-                    f"🆔 *Game ID:* {game_data['game_id']}"
+                    f"🎉 <b>GAME COMPLETED!</b>\n\n"
+                    f"🏆 <b>Winner:</b> @{winners[0]['username']}\n"
+                    f"💰 <b>Winnings:</b> ₹{winner_amount}\n"
+                    f"💼 <b>Commission:</b> ₹{commission_amount}\n"
+                    f"🆔 <b>Game ID:</b> {game_data['game_id']}"
                 )
                 
                 await self.application.bot.send_message(
                     chat_id=int(self.group_id),
                     text=group_message,
-                    parse_mode="MarkdownV2"
+                    parse_mode="HTML"
                 )
+                logger.info("✅ Game completion notification sent to group")
             except Exception as e:
                 logger.error(f"❌ Could not send completion message to group: {e}")
+            
+            # Update balance sheet after game completion
+            try:
+                await self.update_balance_sheet(None)
+                logger.info("✅ Balance sheet updated after game completion")
+            except Exception as e:
+                logger.error(f"❌ Error updating balance sheet after game completion: {e}")
             
             logger.info("✅ Game result processed successfully")
             
@@ -1089,40 +1139,6 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error updating balance sheet: {e}")
 
-    async def update_balance_sheet(self, context: ContextTypes.DEFAULT_TYPE):
-        """Update the balance sheet with latest transactions"""
-        try:
-            # Calculate total revenue
-            total_commissions = sum(
-                t['amount'] 
-                for t in transactions_collection.find({'type': 'win'})
-            )
-            
-            # Calculate total games
-            total_games = games_collection.count_documents({})
-            active_games = games_collection.count_documents({'status': 'active'})
-            
-            # Calculate total players
-            total_players = users_collection.count_documents({})
-            
-            # Update balance sheet
-            balance_sheet_collection.update_one(
-                {'_id': 'main_sheet'},
-                {
-                    '$set': {
-                        'total_commissions': total_commissions,
-                        'total_games': total_games,
-                        'active_games': active_games,
-                        'total_players': total_players,
-                        'last_updated': datetime.now()
-                    }
-                },
-                upsert=True
-            )
-            
-        except Exception as e:
-            logger.error(f"❌ Error updating balance sheet: {e}")
-
     async def winner_selection_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle winner selection from inline buttons"""
         query = update.callback_query
@@ -1197,6 +1213,160 @@ class LudoManagerBot:
         else:
             # Private chat - send normally
             await update.message.reply_text(text)
+
+    def _load_pinned_message_id(self):
+        """Load the pinned balance sheet message ID from database"""
+        try:
+            result = balance_sheet_collection.find_one({'type': 'pinned_balance_sheet'})
+            if result:
+                self.pinned_balance_msg_id = result.get('message_id')
+                logger.info(f"📌 Loaded pinned balance sheet message ID: {self.pinned_balance_msg_id}")
+            else:
+                logger.info("📌 No pinned balance sheet found in database")
+        except Exception as e:
+            logger.error(f"❌ Error loading pinned message ID: {e}")
+
+    async def generate_balance_sheet_content(self) -> str:
+        """Generate the balance sheet content with all users and their balances"""
+        try:
+            # Get all users and sort alphabetically by name
+            users = list(users_collection.find({}, {
+                'username': 1, 'balance': 1, 'first_name': 1
+            }))
+            
+            # Sort alphabetically by account name (first_name or username)
+            users.sort(key=lambda user: (user.get('first_name', user.get('username', 'Unknown User'))).lower())
+            
+            if not users:
+                return "#BALANCESHEET\n\n❌ No users found in database"
+            
+            # Header with game rules and info
+            content = "#BALANCESHEET GAme RuLes - ✅BET_RULE DEPOSIT=QR/NUMBER ✅SOMYA_000 MESSAGE\n"
+            content += "=" * 50 + "\n\n"
+            
+            # Only show actual users from database with their current balances
+            for user in users:
+                # Use first name (account name) instead of username
+                account_name = user.get('first_name', user.get('username', 'Unknown User'))
+                balance = user.get('balance', 0)
+                
+                # Format with triangle emoji: 🔺account_name = balance
+                content += f"🔺{account_name} = {balance}\n"
+            
+            content += "\n" + "=" * 50 + "\n"
+            content += f"📊 Total Users: {len(users)}"
+            
+            # Add timestamp
+            content += f"\n🕐 Last Updated: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating balance sheet: {e}")
+            return "#BALANCESHEET - Error generating balance sheet"
+
+    async def update_balance_sheet(self, context: ContextTypes.DEFAULT_TYPE = None):
+        """Update the pinned balance sheet message"""
+        try:
+            if not self.pinned_balance_msg_id:
+                logger.warning("⚠️ No pinned message ID found, creating new balance sheet")
+                await self.create_new_balance_sheet(context)
+                return
+            
+            # Generate new content
+            balance_sheet_content = await self.generate_balance_sheet_content()
+            
+            # Update the pinned message
+            if context:
+                await context.bot.edit_message_text(
+                    chat_id=int(self.group_id),
+                    message_id=self.pinned_balance_msg_id,
+                    text=balance_sheet_content
+                )
+            elif self.application:
+                await self.application.bot.edit_message_text(
+                    chat_id=int(self.group_id),
+                    message_id=self.pinned_balance_msg_id,
+                    text=balance_sheet_content
+                )
+            else:
+                logger.error("❌ No bot context available for updating balance sheet")
+                return
+            
+            logger.info("✅ Pinned balance sheet updated successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating pinned balance sheet: {e}")
+            logger.warning("⚠️ Attempting to create new balance sheet...")
+            await self.create_new_balance_sheet(context)
+
+    async def create_new_balance_sheet(self, context: ContextTypes.DEFAULT_TYPE = None):
+        """Create and pin a new balance sheet message"""
+        try:
+            # Generate balance sheet content
+            balance_sheet_content = await self.generate_balance_sheet_content()
+            
+            # Send the message
+            if context:
+                message = await context.bot.send_message(
+                    chat_id=int(self.group_id),
+                    text=balance_sheet_content
+                )
+            elif self.application:
+                message = await self.application.bot.send_message(
+                    chat_id=int(self.group_id),
+                    text=balance_sheet_content
+                )
+            else:
+                logger.error("❌ No bot context available for creating balance sheet")
+                return
+            
+            logger.info(f"✅ Balance sheet message sent with ID: {message.message_id}")
+            
+            # Pin the message
+            try:
+                if context:
+                    await context.bot.pin_chat_message(
+                        chat_id=int(self.group_id),
+                        message_id=message.message_id,
+                        disable_notification=True
+                    )
+                elif self.application:
+                    await self.application.bot.pin_chat_message(
+                        chat_id=int(self.group_id),
+                        message_id=message.message_id,
+                        disable_notification=True
+                    )
+                
+                logger.info("📌 Balance sheet pinned successfully")
+                
+                # Store the message ID
+                self.pinned_balance_msg_id = message.message_id
+                balance_sheet_collection.update_one(
+                    {'type': 'pinned_balance_sheet'},
+                    {'$set': {'message_id': message.message_id, 'updated_at': datetime.now()}},
+                    upsert=True
+                )
+                
+                logger.info(f"💾 Balance sheet ID stored: {message.message_id}")
+                
+            except Exception as pin_error:
+                logger.error(f"❌ Could not pin balance sheet: {pin_error}")
+                logger.error(f"📊 Bot might not have admin permissions in group {self.group_id}")
+                
+                # Still store the message ID even if pinning failed
+                self.pinned_balance_msg_id = message.message_id
+                balance_sheet_collection.update_one(
+                    {'type': 'pinned_balance_sheet'},
+                    {'$set': {'message_id': message.message_id, 'updated_at': datetime.now()}},
+                    upsert=True
+                )
+            
+            logger.info(f"✅ New balance sheet created with ID: {message.message_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating balance sheet: {e}")
+            logger.error(f"🔍 Group ID: {self.group_id}")
 
 async def main():
     """Main entry point"""
