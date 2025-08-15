@@ -1065,23 +1065,39 @@ class LudoManagerBot:
             
             # Update winner's balance
             for winner in winners:
-                # CRITICAL FIX: Comprehensive user resolution
+                # CRITICAL FIX: Enhanced user resolution for both entity types
                 username = winner['username']
+                user_id = winner.get('user_id')  # This will be present for text_mention users
                 
-                # First try to find by username
-                user_data = users_collection.find_one({'username': username})
+                logger.info(f"🔍 Processing winner: username='{username}', user_id='{user_id}'")
                 
-                # If not found, try case-insensitive match
+                user_data = None
+                
+                # First, if we have a user_id (from text_mention entity), use it directly
+                if user_id and str(user_id).isdigit():
+                    user_data = users_collection.find_one({'user_id': int(user_id)})
+                    if user_data:
+                        logger.info(f"✅ Found winner by user_id: {user_id}")
+                    else:
+                        logger.warning(f"⚠️ User ID {user_id} not found in database")
+                
+                # If not found by user_id, try username-based lookup
                 if not user_data:
-                    user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
-                
-                # If still not found, try first name match
-                if not user_data:
-                    user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
-                
-                # If still not found, try by user ID if it's numeric
-                if not user_data and username.isdigit():
-                    user_data = users_collection.find_one({'user_id': int(username)})
+                    # First try to find by username
+                    user_data = users_collection.find_one({'username': username})
+                    
+                    # If not found, try case-insensitive match
+                    if not user_data:
+                        user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    # If still not found, try first name match
+                    if not user_data:
+                        user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    if user_data:
+                        logger.info(f"✅ Found winner by username: {username}")
+                    else:
+                        logger.warning(f"⚠️ Winner {username} not found in database")
                 
                 if user_data:
                     # Update balance
@@ -1134,6 +1150,74 @@ class LudoManagerBot:
                     }
                 }
             )
+            
+            # Process losers (all players except winners)
+            winner_usernames = [w['username'] for w in winners]
+            losers = [player for player in game_data['players'] if player['username'] not in winner_usernames]
+            
+            logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
+            
+            for loser in losers:
+                username = loser['username']
+                user_id = loser.get('user_id')  # This will be present for text_mention users
+                
+                logger.info(f"🔍 Processing loser: username='{username}', user_id='{user_id}'")
+                
+                user_data = None
+                
+                # First, if we have a user_id (from text_mention entity), use it directly
+                if user_id and str(user_id).isdigit():
+                    user_data = users_collection.find_one({'user_id': int(user_id)})
+                    if user_data:
+                        logger.info(f"✅ Found loser by user_id: {user_id}")
+                    else:
+                        logger.warning(f"⚠️ User ID {user_id} not found in database")
+                
+                # If not found by user_id, try username-based lookup
+                if not user_data:
+                    # First try to find by username
+                    user_data = users_collection.find_one({'username': username})
+                    
+                    # If not found, try case-insensitive match
+                    if not user_data:
+                        user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    # If still not found, try first name match
+                    if not user_data:
+                        user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    if user_data:
+                        logger.info(f"✅ Found loser by username: {username}")
+                    else:
+                        logger.warning(f"⚠️ Loser {username} not found in database")
+                
+                if user_data:
+                    # Loser doesn't get any money back (bet was already deducted)
+                    # Just notify them about the loss
+                    try:
+                        # Generate link to the original game table message
+                        table_link = self._generate_message_link(
+                            game_data['chat_id'], 
+                            int(game_data['admin_message_id'])
+                        )
+                        
+                        await self.application.bot.send_message(
+                            chat_id=user_data['user_id'],
+                            text=(
+                                f"😔 <b>You Lost!</b>\n\n"
+                                f"💰 <b>Amount Lost:</b> ₹{game_data['bet_amount']}\n"
+                                f"📊 <b>Current Balance:</b> ₹{user_data.get('balance', 0)}\n\n"
+                                f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
+                                f"Better luck next time! 🍀"
+                            ),
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
+                        )
+                        logger.info(f"✅ Loser notification sent to {user_data['user_id']}")
+                    except Exception as e:
+                        logger.error(f"❌ Could not notify loser {user_data['user_id']}: {e}")
+                else:
+                    logger.warning(f"⚠️ Loser {username} not found in database")
             
             # Notify group
             try:
