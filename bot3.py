@@ -119,25 +119,25 @@ class LudoManagerBot:
             if identifier.isdigit():
                 user_id = int(identifier)
                 user_data = users_collection.find_one({'user_id': user_id})
-                if user_
+                if user_data:
                     logger.info(f"✅ Found user by ID: {user_id}")
                     return user_data
             
             # Try direct username match
             user_data = users_collection.find_one({'username': identifier})
-            if user_
+            if user_data:
                 logger.info(f"✅ Found user by direct username match: {identifier}")
                 return user_data
             
             # Try case-insensitive username match
             user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(identifier)}$', '$options': 'i'}})
-            if user_
+            if user_data:
                 logger.info(f"✅ Found user by case-insensitive match: {identifier} -> {user_data['username']}")
                 return user_data
             
             # Try first name match (case-insensitive)
             user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(identifier)}$', '$options': 'i'}})
-            if user_
+            if user_data:
                 logger.info(f"✅ Found user by first name match: {identifier} -> {user_data['first_name']}")
                 return user_data
             
@@ -168,6 +168,8 @@ class LudoManagerBot:
                                 upsert=True
                             )
                             
+                            # Retrieve the updated user data
+                            user_data = users_collection.find_one({'user_id': entity.user.id})
                             logger.info(f"✅ Created/updated user from mention: {user_data}")
                             return user_data
             
