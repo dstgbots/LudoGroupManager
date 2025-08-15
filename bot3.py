@@ -572,7 +572,8 @@ class LudoManagerBot:
                         username = mention_text.lstrip('@')
                         mentioned_users.append({
                             "username": username,
-                            "is_mention": True
+                            "is_mention": True,
+                            "entity_type": "mention"
                         })
                         logger.debug(f"Found @mention entity: {username}")
                     
@@ -580,12 +581,36 @@ class LudoManagerBot:
                     elif hasattr(entity, 'type') and entity.type == "text_mention":
                         user = getattr(entity, 'user', None)
                         if user:
+                            # Create/update user entry automatically
+                            user_data = {
+                                'user_id': user.id,
+                                'username': user.username or f"user_{user.id}",
+                                'first_name': user.first_name,
+                                'last_name': user.last_name,
+                                'is_admin': user.id in self.admin_ids,
+                                'last_active': datetime.now(),
+                                'balance': 0
+                            }
+                            
+                            # Insert or update user
+                            users_collection.update_one(
+                                {'user_id': user.id},
+                                {
+                                    '$set': user_data,
+                                    '$setOnInsert': {'created_at': datetime.now()}
+                                },
+                                upsert=True
+                            )
+                            
                             mentioned_users.append({
                                 "user_id": user.id,
                                 "username": user.username or f"user_{user.id}",
                                 "first_name": user.first_name,
-                                "is_mention": True
+                                "is_mention": True,
+                                "entity_type": "text_mention",
+                                "telegram_user_id": user.id
                             })
+                            logger.info(f"✅ Created/updated user from game table text_mention: {user.first_name} (ID: {user.id})")
                             logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id})")
                     
                     # Debug: log all entity types we encounter
@@ -613,7 +638,11 @@ class LudoManagerBot:
                         username = match.group(1)
                         # Filter out common non-username words
                         if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
-                            usernames_from_text.append(username)
+                            usernames_from_text.append({
+                                "username": username,
+                                "entity_type": "text_regex",
+                                "is_mention": False
+                            })
                             logger.info(f"👥 Player found from text: {username}")
             
             # Combine mentioned users and users from text
@@ -624,7 +653,19 @@ class LudoManagerBot:
                 elif 'username' in user:
                     all_user_identifiers.append(user['username'])
             
-            all_user_identifiers.extend([u for u in usernames_from_text if u not in all_user_identifiers])
+            # Handle text-based usernames (now in dict format)
+            for user_info in usernames_from_text:
+                username = user_info['username']
+                if username not in [u.get('username', '') for u in mentioned_users]:
+                    all_user_identifiers.append(username)
+            
+            # Log summary of found users
+            logger.info(f"🔍 Found {len(mentioned_users)} mentioned users and {len(usernames_from_text)} text-based users")
+            for user in mentioned_users:
+                if user.get('entity_type') == 'text_mention':
+                    logger.info(f"   📱 Contact tap: {user.get('first_name', 'Unknown')} (ID: {user.get('user_id', 'Unknown')})")
+                elif user.get('entity_type') == 'mention':
+                    logger.info(f"   @ Username: {user.get('username', 'Unknown')}")
             
             # Verify users exist in our database
             valid_players = []
@@ -1130,6 +1171,7 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("ping", self.ping_command))
         application.add_handler(CommandHandler("debugmessage", self.debug_message_command))
+        application.add_handler(CommandHandler("testgametable", self.test_game_table_entities_command))
         application.add_handler(CommandHandler("testmentions", self.test_mentions_command))
         application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("balance", self.balance_command))
@@ -1335,6 +1377,80 @@ class LudoManagerBot:
             logger.error(f"Error in debug_message command: {e}")
             await self.send_group_response(update, context, f"❌ Error debugging message: {str(e)}")
 
+    async def test_game_table_entities_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /testgametable command - test game table entity detection"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        try:
+            message = update.message
+            message_text = "🔍 **Game Table Entity Test**\n\n"
+            
+            # Check if message contains "Full" keyword (like a game table)
+            if "Full" in message.text or "full" in message.text:
+                message_text += "✅ **Game table format detected!**\n\n"
+                
+                # Test the game table entity extraction
+                if message.entities:
+                    message_text += f"🔍 **Found {len(message.entities)} entities:**\n"
+                    for i, entity in enumerate(message.entities):
+                        message_text += f"\n**Entity {i+1}:**\n"
+                        message_text += f"• Type: `{getattr(entity, 'type', 'unknown')}`\n"
+                        message_text += f"• Offset: `{getattr(entity, 'offset', 'unknown')}`\n"
+                        message_text += f"• Length: `{getattr(entity, 'length', 'unknown')}`\n"
+                        
+                        if hasattr(entity, 'user') and entity.user:
+                            message_text += f"• User ID: `{entity.user.id}`\n"
+                            message_text += f"• Username: `{entity.user.username or 'None'}`\n"
+                            message_text += f"• First Name: `{entity.user.first_name or 'None'}`\n"
+                            message_text += f"• Last Name: `{entity.user.last_name or 'None'}`\n"
+                    
+                    # Test the new entity extraction function
+                    message_text += f"\n🔍 **Testing entity extraction:**\n"
+                    mentioned_users = []
+                    
+                    for entity in message.entities:
+                        if hasattr(entity, 'type') and entity.type == "mention":
+                            mention_text = message.text[entity.offset:entity.offset + entity.length]
+                            username = mention_text.lstrip('@')
+                            mentioned_users.append({
+                                "username": username,
+                                "is_mention": True,
+                                "entity_type": "mention"
+                            })
+                            message_text += f"✅ @mention: {username}\n"
+                        
+                        elif hasattr(entity, 'type') and entity.type == "text_mention":
+                            user = getattr(entity, 'user', None)
+                            if user:
+                                mentioned_users.append({
+                                    "user_id": user.id,
+                                    "username": user.username or f"user_{user.id}",
+                                    "first_name": user.first_name,
+                                    "is_mention": True,
+                                    "entity_type": "text_mention",
+                                    "telegram_user_id": user.id
+                                })
+                                message_text += f"✅ text_mention: {user.first_name} (ID: {user.id})\n"
+                    
+                    message_text += f"\n📊 **Total mentioned users:** {len(mentioned_users)}\n"
+                    
+                else:
+                    message_text += "❌ **No entities found** - This might be a text-only game table\n"
+            else:
+                message_text += "❌ **Not a game table format** - Message must contain 'Full' keyword\n"
+                message_text += "\n💡 **Try this format:**\n"
+                message_text += "```\n@username1\n@username2\n1000 Full\n```"
+                message_text += "\nOr with contact taps:\n"
+                message_text += "```\n[Tap User1's contact]\n[Tap User2's contact]\n1000 Full\n```"
+            
+            await self.send_group_response(update, context, message_text)
+            
+        except Exception as e:
+            logger.error(f"Error in test_game_table_entities command: {e}")
+            await self.send_group_response(update, context, f"❌ Error testing game table entities: {str(e)}")
+
     async def test_mentions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /testmentions command - test mention detection"""
         if update.effective_user.id not in self.admin_ids:
@@ -1474,6 +1590,7 @@ class LudoManagerBot:
             "📊 **ADMIN COMMANDS:**\n"
             "/ping - Check if bot is running\n"
             "/debugmessage - Show raw message data for debugging\n"
+            "/testgametable - Test game table entity detection\n"
             "/testmentions - Test mention detection\n"
             "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
