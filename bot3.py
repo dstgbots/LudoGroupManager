@@ -350,22 +350,166 @@ class LudoManagerBot:
             )
             
             if game_data:
-                # Store game with STRING ID for consistency (CRITICAL FIX)
-                self.active_games[str(update.message.message_id)] = game_data
+                # Deduct bet amounts from all players' balances BEFORE storing the game
+                success = await self._deduct_player_bets(game_data)
                 
-                logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
-                logger.info(f"🔍 Current active games count: {len(self.active_games)}")
-                
-                # Send confirmation to group - FIXED: Properly escaped for MarkdownV2
-                await self._send_group_confirmation(context, update.effective_chat.id)
-                
-                # Send winner selection message to admin's DM
-                await self._send_winner_selection_to_admin(
-                    game_data, 
-                    update.effective_user.id
-                )
+                if success:
+                    # Store game with STRING ID for consistency (CRITICAL FIX)
+                    self.active_games[str(update.message.message_id)] = game_data
+                    
+                    # Also store in database
+                    games_collection.insert_one(game_data)
+                    
+                    logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
+                    logger.info(f"🔍 Current active games count: {len(self.active_games)}")
+                    
+                    # Send confirmation to group - FIXED: Properly escaped for MarkdownV2
+                    await self._send_group_confirmation(context, update.effective_chat.id)
+                    
+                    # Send winner selection message to admin's DM
+                    await self._send_winner_selection_to_admin(
+                        game_data, 
+                        update.effective_user.id
+                    )
+                else:
+                    logger.error("❌ Failed to deduct bet amounts - game not created")
             else:
                 logger.warning("❌ Failed to extract game data from message")
+    
+    async def _deduct_player_bets(self, game_data: Dict) -> bool:
+        """Deduct bet amounts from all players' balances when game is created"""
+        try:
+            logger.info(f"💳 Deducting bet amounts for game {game_data['game_id']}")
+            
+            successful_deductions = []
+            failed_players = []
+            
+            for i, player in enumerate(game_data['players']):
+                username = player['username']
+                bet_amount = player['bet_amount']
+                
+                try:
+                    # Find user with case-insensitive matching
+                    user_data = users_collection.find_one({
+                        '$or': [
+                            {'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}},
+                            {'username': {'$regex': f'^@{re.escape(username)}$', '$options': 'i'}}
+                        ]
+                    })
+                    
+                    if not user_data:
+                        logger.error(f"❌ Player {username} not found in database")
+                        failed_players.append(username)
+                        continue
+                    
+                    # Deduct bet amount from user balance (allow negative balances)
+                    old_balance = user_data.get('balance', 0)
+                    new_balance = old_balance - bet_amount
+                    
+                    # Update user balance
+                    users_collection.update_one(
+                        {'_id': user_data['_id']},
+                        {
+                            '$set': {
+                                'balance': new_balance,
+                                'last_updated': datetime.now()
+                            }
+                        }
+                    )
+                    
+                    # Record bet transaction
+                    transaction_data = {
+                        'user_id': user_data['user_id'],
+                        'type': 'bet',
+                        'amount': -bet_amount,  # Negative because it's a deduction
+                        'description': f'Bet placed in game {game_data["game_id"]}',
+                        'timestamp': datetime.now(),
+                        'game_id': game_data['game_id'],
+                        'old_balance': old_balance,
+                        'new_balance': new_balance
+                    }
+                    transactions_collection.insert_one(transaction_data)
+                    
+                    # Update player data with user_id for later use
+                    game_data['players'][i]['user_id'] = user_data['user_id']
+                    
+                    logger.info(f"✅ Deducted ₹{bet_amount} from {username} (₹{old_balance} → ₹{new_balance})")
+                    successful_deductions.append(username)
+                    
+                    # Notify player about bet deduction
+                    try:
+                        await self.application.bot.send_message(
+                            chat_id=user_data['user_id'],
+                            text=(
+                                f"🎮 <b>Game Joined!</b>\n\n"
+                                f"<b>Game ID:</b> {game_data['game_id']}\n"
+                                f"<b>Bet Amount:</b> ₹{bet_amount}\n"
+                                f"<b>Old Balance:</b> ₹{old_balance}\n"
+                                f"<b>New Balance:</b> ₹{new_balance}\n\n"
+                                f"Good luck! 🍀"
+                            ),
+                            parse_mode="HTML"
+                        )
+                        logger.info(f"✅ Bet notification sent to {username}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not notify {username} about bet: {e}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error deducting bet for {username}: {e}")
+                    failed_players.append(username)
+            
+            if failed_players:
+                logger.error(f"❌ Failed to deduct bets for players: {failed_players}")
+                # Refund successful deductions since game creation failed
+                await self._refund_failed_game(successful_deductions, game_data)
+                return False
+            
+            logger.info(f"✅ Successfully deducted bets from all {len(successful_deductions)} players")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in _deduct_player_bets: {e}")
+            return False
+    
+    async def _refund_failed_game(self, successful_players: List[str], game_data: Dict):
+        """Refund bet amounts if game creation fails"""
+        try:
+            logger.info(f"🔄 Refunding bets for failed game {game_data['game_id']}")
+            
+            for username in successful_players:
+                user_data = users_collection.find_one({
+                    '$or': [
+                        {'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}},
+                        {'username': {'$regex': f'^@{re.escape(username)}$', '$options': 'i'}}
+                    ]
+                })
+                
+                if user_data:
+                    bet_amount = next(p['bet_amount'] for p in game_data['players'] if p['username'] == username)
+                    old_balance = user_data.get('balance', 0)
+                    new_balance = old_balance + bet_amount
+                    
+                    # Refund the bet amount
+                    users_collection.update_one(
+                        {'_id': user_data['_id']},
+                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                    )
+                    
+                    # Record refund transaction
+                    transaction_data = {
+                        'user_id': user_data['user_id'],
+                        'type': 'refund',
+                        'amount': bet_amount,
+                        'description': f'Refund for failed game {game_data["game_id"]}',
+                        'timestamp': datetime.now(),
+                        'game_id': game_data['game_id']
+                    }
+                    transactions_collection.insert_one(transaction_data)
+                    
+                    logger.info(f"✅ Refunded ₹{bet_amount} to {username}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Error refunding failed game: {e}")
     
     async def _send_group_confirmation(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         """Send confirmation message to group with proper MarkdownV2 formatting"""
