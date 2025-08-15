@@ -111,6 +111,61 @@ class LudoManagerBot:
             logger.error(f"❌ Error generating message link: {e}")
             return f"Message ID: {message_id }"
 
+    def _extract_user_from_entities(self, message_entities: List, message_text: str) -> Optional[Dict]:
+        """Extract user information directly from message entities (most reliable method)"""
+        if not message_entities:
+            return None
+        
+        for entity in message_entities:
+            # Handle @username mentions (entity.type == "mention")
+            if hasattr(entity, 'type') and entity.type == "mention":
+                mention_text = message_text[entity.offset:entity.offset + entity.length]
+                username = mention_text.lstrip('@')
+                logger.info(f"🔍 Found @mention entity: {username}")
+                
+                # Find user by username in database
+                user_data = users_collection.find_one({'username': {'$regex': f'^{username}$', '$options': 'i'}})
+                if user_data:
+                    logger.info(f"✅ Found user by @mention: {username}")
+                    return user_data
+                else:
+                    logger.warning(f"⚠️ User not found by @mention: {username}")
+                    return None
+            
+            # Handle direct user mentions by tapping contact (entity.type == "text_mention")
+            elif hasattr(entity, 'type') and entity.type == "text_mention":
+                user = getattr(entity, 'user', None)
+                if user:
+                    logger.info(f"🔍 Found text_mention entity: {user.first_name} (ID: {user.id})")
+                    
+                    # Check if user exists in database
+                    user_data = users_collection.find_one({'user_id': user.id})
+                    if user_data:
+                        logger.info(f"✅ Found existing user by text_mention: {user.first_name}")
+                        return user_data
+                    else:
+                        # Create new user entry
+                        new_user_data = {
+                            'user_id': user.id,
+                            'username': user.username or user.first_name,
+                            'first_name': user.first_name,
+                            'last_name': user.last_name,
+                            'is_admin': user.id in self.admin_ids,
+                            'last_active': datetime.now(),
+                            'balance': 0,
+                            'created_at': datetime.now()
+                        }
+                        
+                        result = users_collection.insert_one(new_user_data)
+                        new_user_data['_id'] = result.inserted_id
+                        
+                        logger.info(f"✅ Created new user from text_mention: {user.first_name} (ID: {user.id})")
+                        return new_user_data
+                else:
+                    logger.warning(f"⚠️ text_mention entity has no user object")
+        
+        return None
+
     async def _resolve_user_mention(self, identifier: str, context: ContextTypes.DEFAULT_TYPE = None) -> Optional[Dict]:
         """Resolve user from mention, user ID, or username with comprehensive matching"""
         try:
@@ -237,7 +292,7 @@ class LudoManagerBot:
                 
                 # Handle direct user mentions by tapping contact (entity.type == "text_mention")
                 elif hasattr(entity, 'type') and entity.type == "text_mention":
-                    # ent.user carries the User object
+                    # ent.user carries the User object with real Telegram user data
                     user = getattr(entity, 'user', None)
                     if user:
                         # Create user entry if not exists
@@ -1410,11 +1465,11 @@ class LudoManagerBot:
             "**User mentions supported:**\n"
             "• Username: @username\n"
             "• First name: @FirstName\n"
-            "• Direct contact tap (no @ needed)\n"
+            "• **Direct contact tap (no @ needed)** - Most reliable!\n"
             "• Works even without @ symbol\n"
             "• Supports international characters\n"
-            "• Uses Telegram's native mention system\n"
-            "• **NEW**: Telegram entity-based mention detection\n\n"
+            "• Uses Telegram's native entity system\n"
+            "• **NEW**: Automatic user creation from contact taps\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/ping - Check if bot is running\n"
@@ -1422,15 +1477,15 @@ class LudoManagerBot:
             "/testmentions - Test mention detection\n"
             "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
-            "/addbalance @username amount - Add balance to user\n"
-            "   Examples: /addbalance @Gopal 500\n"
-            "            /addbalance \"Gopal M\" 500\n"
-            "/withdraw @username amount - Withdraw from user\n"
-            "   Examples: /withdraw @Gopal 500\n"
-            "            /withdraw \"Gopal M\" 500\n"
-                         "/setcommission @username percentage - Set custom commission rate\n"
-            "   Examples: /setcommission @Gopal 10\n"
-            "            /setcommission \"Gopal M\" 10\n"
+                            "/addbalance @username amount - Add balance to user\n"
+                "   Examples: /addbalance @Gopal 500\n"
+                "            /addbalance [Tap Gopal's contact] 500\n"
+                "/withdraw @username amount - Withdraw from user\n"
+                "   Examples: /withdraw @Gopal 500\n"
+                "            /withdraw [Tap Gopal's contact] 500\n"
+                "/setcommission @username percentage - Set custom commission rate\n"
+                "   Examples: /setcommission @Gopal 10\n"
+                "            /setcommission [Tap Gopal's contact] 10\n"
              "/expiregames - Manually expire old games\n"
              "/balancesheet - Create/update pinned balance sheet\n"
              "/stats - Show game and user statistics\n"
@@ -1523,25 +1578,51 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "Usage: /addbalance @username amount OR /addbalance \"First Name\" amount")
                 return
             
-            # Handle names with spaces: /addbalance "Gopal M" 500
-            # The last argument is always the amount
+            # Try to extract user directly from message entities first (most reliable)
+            user_data = self._extract_user_from_entities(update.message.entities, update.message.text)
+            
+            if user_data:
+                logger.info(f"✅ Found user from entities: {user_data.get('first_name', user_data.get('username', 'Unknown'))}")
+            else:
+                # Fallback to parsing command arguments for names with spaces
+                logger.info("🔍 No user found in entities, trying command argument parsing")
+                
+                # Handle names with spaces: /addbalance "Gopal M" 500
+                # The last argument is always the amount
+                username_parts = context.args[:-1]  # Everything except amount
+                username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
+                
+                logger.info(f"🔍 Parsed command - Username: '{username}', Amount: {amount}")
+                
+                # Find user using the fallback mention resolver
+                user_data = await self._resolve_user_mention(username, None)
+            
+            # Extract amount from command arguments
             amount = int(context.args[-1])  # Last argument is amount
-            
-            # All arguments except the last one form the username/name
-            username_parts = context.args[:-1]  # Everything except amount
-            username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
-            
-            logger.info(f"🔍 Parsed command - Username: '{username}', Amount: {amount}")
             
             if amount <= 0:
                 await self.send_group_response(update, context, "❌ Amount must be positive!")
                 return
-                
-            # Find user using the new mention resolver
-            user_data = await self._resolve_user_mention(username, None)
             
             if not user_data:
-                await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
+                                # Get username for error message
+                if update.message.entities:
+                    # Try to get username from entities
+                    for entity in update.message.entities:
+                        if hasattr(entity, 'type') and entity.type == "mention":
+                            username = update.message.text[entity.offset:entity.offset + entity.length].lstrip('@')
+                            break
+                        elif hasattr(entity, 'type') and entity.type == "text_mention":
+                            user = getattr(entity, 'user', None)
+                            if user:
+                                username = user.first_name or f"user_{user.id}"
+                                break
+                    else:
+                        username = "Unknown User"
+                else:
+                    username = "Unknown User"
+                
+                await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
                 
             # Update balance
@@ -1630,22 +1711,31 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "Usage: /withdraw @username amount OR /withdraw \"First Name\" amount")
                 return
             
-            # Handle names with spaces: /withdraw "Gopal M" 500
-            # The last argument is always the amount
+            # Try to extract user directly from message entities first (most reliable)
+            user_data = self._extract_user_from_entities(update.message.entities, update.message.text)
+            
+            if user_data:
+                logger.info(f"✅ Found user from entities: {user_data.get('first_name', user_data.get('username', 'Unknown'))}")
+            else:
+                # Fallback to parsing command arguments for names with spaces
+                logger.info("🔍 No user found in entities, trying command argument parsing")
+                
+                # Handle names with spaces: /withdraw "Gopal M" 500
+                # The last argument is always the amount
+                username_parts = context.args[:-1]  # Everything except amount
+                username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
+                
+                logger.info(f"🔍 Parsed command - Username: '{username}', Amount: {amount}")
+                
+                # Find user using the fallback mention resolver
+                user_data = await self._resolve_user_mention(username, None)
+            
+            # Extract amount from command arguments
             amount = int(context.args[-1])  # Last argument is amount
-            
-            # All arguments except the last one form the username/name
-            username_parts = context.args[:-1]  # Everything except amount
-            username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
-            
-            logger.info(f"🔍 Parsed command - Username: '{username}', Amount: {amount}")
             
             if amount <= 0:
                 await self.send_group_response(update, context, "❌ Amount must be positive!")
                 return
-                
-            # Find user using the new mention resolver
-            user_data = await self._resolve_user_mention(username, None)
             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
@@ -1822,15 +1912,27 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "Usage: /setcommission @username percentage OR /setcommission \"First Name\" percentage")
                 return
             
-            # Handle names with spaces: /setcommission "Gopal M" 10
-            # The last argument is always the percentage
+            # Try to extract user directly from message entities first (most reliable)
+            user_data = self._extract_user_from_entities(update.message.entities, update.message.text)
+            
+            if user_data:
+                logger.info(f"✅ Found user from entities: {user_data.get('first_name', user_data.get('username', 'Unknown'))}")
+            else:
+                # Fallback to parsing command arguments for names with spaces
+                logger.info("🔍 No user found in entities, trying command argument parsing")
+                
+                # Handle names with spaces: /setcommission "Gopal M" 10
+                # The last argument is always the percentage
+                username_parts = context.args[:-1]  # Everything except percentage
+                username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
+                
+                logger.info(f"🔍 Parsed command - Username: '{username}', Commission: {commission_percentage}%")
+                
+                # Find user using the fallback mention resolver
+                user_data = await self._resolve_user_mention(username, None)
+            
+            # Extract percentage from command arguments
             commission_percentage = float(context.args[-1])  # Last argument is percentage
-            
-            # All arguments except the last one form the username/name
-            username_parts = context.args[:-1]  # Everything except percentage
-            username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
-            
-            logger.info(f"🔍 Parsed command - Username: '{username}', Commission: {commission_percentage}%")
             
             if commission_percentage < 0 or commission_percentage > 100:
                 await self.send_group_response(update, context, "❌ Commission rate must be between 0 and 100 (e.g., 10 for 10%, 100 for 100%)")
@@ -1838,9 +1940,6 @@ class LudoManagerBot:
                 
             # Convert percentage to decimal for storage (10% = 0.1)
             commission_rate = commission_percentage / 100
-                
-            # Find user using the new mention resolver
-            user_data = await self._resolve_user_mention(username, None)
             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
