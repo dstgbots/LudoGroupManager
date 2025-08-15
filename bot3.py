@@ -458,49 +458,86 @@ class LudoManagerBot:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
     
-    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, message_entities: List = None) -> Optional[Dict]:
-        """Extract game data from message text using Telegram entities for mentions (more reliable)"""
+    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, update: Update) -> Optional[Dict]:
+        """Extract game data from message text using message entities for user mentions"""
         try:
             logger.info(f"📄 Processing game table message...")
             logger.info(f"📝 Message content: {message_text}")
             
-            # Extract mentions using the new entity-based system
-            usernames = self._extract_mentions_from_message(message_text, message_entities)
-            amount = None
+            # First, extract all mentioned users from message entities (CRITICAL FIX)
+            mentioned_users = []
+            if update.message.entities:
+                for entity in update.message.entities:
+                    if entity.type == "text_mention" and entity.user:
+                        # User mentioned by first name (no username)
+                        mentioned_users.append({
+                            "user_id": entity.user.id,
+                            "username": entity.user.username or f"user_{entity.user.id}",
+                            "first_name": entity.user.first_name,
+                            "is_mention": True
+                        })
+                    elif entity.type == "mention":
+                        # User mentioned with username (@username)
+                        mention_text = update.message.text[entity.offset:entity.offset + entity.length]
+                        username = mention_text.lstrip('@')
+                        mentioned_users.append({
+                            "username": username,
+                            "is_mention": True
+                        })
             
-            # Look for amount with "Full" keyword
+            # Also check for usernames in the message text (for cases where users aren't properly mentioned)
             lines = message_text.strip().split("\n")
-            for line in lines:
-                if "full" in line.lower():
-                    # Support both formats: "1000 Full", "1k Full", "10k Full", etc.
-                    logger.debug(f"🔍 Processing amount line: '{line}'")
-                    match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", line)
-                    if match:
-                        amount_str = match.group(1)
-                        logger.debug(f"🔍 Matched amount string: '{amount_str}'")
-                        # Convert k format to actual number
-                        if amount_str.lower().endswith('k'):
-                            amount = int(amount_str[:-1]) * 1000
-                            logger.info(f"💰 K format amount found: {amount_str} = ₹{amount}")
-                        else:
-                            amount = int(amount_str)
-                            logger.info(f"💰 Regular amount found: {amount_str} = ₹{amount}")
-                        break
-                    else:
-                        logger.warning(f"⚠️ No amount match found in line: '{line}'")
+            usernames_from_text = []
+            amount = None
     
-            if not usernames or not amount:
+            for line in lines:
+                logger.debug(f"🔍 Processing line: {line}")
+                
+                # Look for amount with "Full" keyword
+                if "full" in line.lower():
+                    match = re.search(r"(\d+)\s*[Ff]ull", line)
+                    if match:
+                        amount = int(match.group(1))
+                        logger.info(f"💰 Amount found: {amount}")
+                else:
+                    # Extract username with or without @
+                    match = re.search(r"@?([a-zA-Z0-9_]+)", line)
+                    if match:
+                        username = match.group(1)
+                        # Filter out common non-username words
+                        if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
+                            usernames_from_text.append(username)
+                            logger.info(f"👥 Player found from text: {username}")
+            
+            # Combine mentioned users and users from text
+            all_user_identifiers = []
+            for user in mentioned_users:
+                if 'user_id' in user:
+                    all_user_identifiers.append(str(user['user_id']))
+                elif 'username' in user:
+                    all_user_identifiers.append(user['username'])
+            
+            all_user_identifiers.extend([u for u in usernames_from_text if u not in all_user_identifiers])
+            
+            # Verify users exist in our database
+            valid_players = []
+            for identifier in all_user_identifiers:
+                # First try to resolve the user
+                user_data = self._resolve_user_mention(identifier, update)
+                if user_
+                    valid_players.append({
+                        'username': user_data['username'],
+                        'user_id': user_data['user_id'],
+                        'first_name': user_data.get('first_name', '')
+                    })
+                    logger.info(f"✅ Valid player: {user_data['username']} (ID: {user_data['user_id']})")
+            
+            if not valid_players or not amount:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
                 return None
     
-            # Check if exactly 2 players (no more, no less)
-            if len(usernames) != 2:
-                logger.warning(f"❌ Need exactly 2 players for a game, found {len(usernames)}")
-                return None
-            
-            # Check for duplicate usernames (same person playing against themselves)
-            if len(set(usernames)) != len(usernames):
-                logger.warning(f"❌ Duplicate usernames found: {usernames}")
+            if len(valid_players) < 2:
+                logger.warning("❌ Need at least 2 players for a game")
                 return None
     
             # Create game data with STRING ID for consistency (CRITICAL FIX)
@@ -511,8 +548,8 @@ class LudoManagerBot:
                 'admin_message_id': str(message_id),  # Store as string
                 'chat_id': chat_id,
                 'bet_amount': amount,
-                'players': [{'username': username, 'bet_amount': amount} for username in usernames],
-                'total_amount': amount * len(usernames),
+                'players': [{'username': player['username'], 'user_id': player['user_id'], 'bet_amount': amount} for player in valid_players],
+                'total_amount': amount * len(valid_players),
                 'status': 'active',
                 'created_at': datetime.now(),
                 'expires_at': datetime.now() + timedelta(hours=1)
@@ -521,7 +558,7 @@ class LudoManagerBot:
             logger.info(f"🎮 Game data created: {game_data}")
             return game_data
         except Exception as e:
-            logger.error(f"❌ Error extracting game data: {e}")
+            logger.error(f"❌ Error extracting game  {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None
     
