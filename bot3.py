@@ -316,8 +316,14 @@ class LudoManagerBot:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
                 return None
     
-            if len(usernames) < 2:
-                logger.warning("❌ Need at least 2 players for a game")
+            # Check if exactly 2 players (no more, no less)
+            if len(usernames) != 2:
+                logger.warning(f"❌ Need exactly 2 players for a game, found {len(usernames)}")
+                return None
+            
+            # Check for duplicate usernames (same person playing against themselves)
+            if len(set(usernames)) != len(usernames):
+                logger.warning(f"❌ Duplicate usernames found: {usernames}")
                 return None
     
             # Create game data with STRING ID for consistency (CRITICAL FIX)
@@ -393,7 +399,67 @@ class LudoManagerBot:
                     logger.error("❌ Failed to deduct bet amounts - game not created")
             else:
                 logger.warning("❌ Failed to extract game data from message")
+                # Send rejection message to group with auto-deletion
+                await self._send_table_rejection_message(context, update.effective_chat.id, update.message.text)
     
+    async def _send_table_rejection_message(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_text: str):
+        """Send rejection message to group with auto-deletion after 5 seconds"""
+        try:
+            # Analyze the table to determine the specific issue
+            lines = message_text.strip().split("\n")
+            usernames = []
+            amount = None
+            
+            for line in lines:
+                if "full" in line.lower():
+                    match = re.search(r"(\d+)\s*[Ff]ull", line)
+                    if match:
+                        amount = int(match.group(1))
+                else:
+                    match = re.search(r"@?([a-zA-Z0-9_]+)", line)
+                    if match:
+                        username = match.group(1)
+                        if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
+                            usernames.append(username)
+            
+            # Determine the specific rejection reason
+            if not usernames:
+                rejection_message = "❌ **Invalid Table Format!**\n\nNo valid usernames found in the table.\n\nPlease send a table with exactly 2 different usernames and amount."
+            elif len(usernames) != 2:
+                rejection_message = f"❌ **Invalid Player Count!**\n\nFound {len(usernames)} players, but only 2 players are allowed.\n\nPlease send a table with exactly 2 different usernames and amount."
+            elif len(set(usernames)) != len(usernames):
+                rejection_message = "❌ **Duplicate Username Detected!**\n\nYou cannot play against yourself.\n\nPlease send a table with 2 different usernames and amount."
+            elif not amount:
+                rejection_message = "❌ **Invalid Amount!**\n\nNo valid amount found in the table.\n\nPlease send a table with exactly 2 different usernames and amount."
+            else:
+                rejection_message = "❌ **Invalid Table Format!**\n\nPlease send a table with exactly 2 different usernames and amount."
+            
+            # Send rejection message to group
+            message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=rejection_message,
+                parse_mode="HTML"
+            )
+            
+            # Auto-delete the rejection message after 5 seconds
+            async def delete_rejection_message():
+                try:
+                    await asyncio.sleep(5)
+                    await context.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=message.message_id
+                    )
+                    logger.info(f"🗑️ Deleted table rejection message {message.message_id}")
+                except Exception as e:
+                    logger.warning(f"Could not delete rejection message: {e}")
+            
+            # Create task for deletion (fire and forget)
+            asyncio.create_task(delete_rejection_message())
+            logger.info("✅ Table rejection message sent and scheduled for deletion")
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending table rejection message: {e}")
+
     async def _deduct_player_bets(self, game_data: Dict) -> bool:
         """Deduct bet amounts from all players' balances when game is created"""
         try:
@@ -991,10 +1057,11 @@ class LudoManagerBot:
             "• Add ✅ after the winner's username\n"
             "• Example: @player1 ✅\n"
             "• Bot will detect the edit and process results\n\n"
-            "Example table format:\n"
+                        "Example table format:\n"
             "@player1\n"
             "@player2\n"
             "400 Full\n\n"
+            "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/activegames - Show all currently running games\n"
             "/addbalance @username amount - Add balance to user\n"
