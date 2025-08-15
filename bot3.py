@@ -66,7 +66,7 @@ class LudoManagerBot:
         # Balance sheet management
         self.pinned_balance_msg_id = None
         self._load_pinned_message_id()
-            
+        
         # Check if Pyrogram is available
         self.pyrogram_available = True
         try:
@@ -172,48 +172,40 @@ class LudoManagerBot:
             logger.error(f"❌ Error resolving user mention {mention}: {e}")
             return None
 
-    def _extract_mentions_from_message(self, message_text: str, entities: List = None) -> List[str]:
-        """Extract user mentions from message using Telegram entities (more accurate than regex)"""
+    def _extract_mentions_from_message(self, message_text: str, message_entities: List = None) -> List[str]:
+        """Extract user mentions from message using Telegram entities (more reliable than regex)"""
         mentions = []
         
         try:
-            if not entities:
-                logger.debug("No entities found in message")
-                return mentions
+            if not message_entities:
+                logger.debug("No message entities found, falling back to regex parsing")
+                return self._extract_mentions_with_regex(message_text)
             
-            for ent in entities:
-                # Explicit @username mention
-                if hasattr(ent, 'type') and ent.type == 'mention':
-                    mention_text = message_text[ent.offset : ent.offset + ent.length]
+            for entity in message_entities:
+                # Handle @username mentions
+                if hasattr(entity, 'type') and entity.type == 'mention':
+                    mention_text = message_text[entity.offset:entity.offset + entity.length]
                     mentions.append(mention_text)
-                    logger.debug(f"✅ Found @mention: {mention_text}")
+                    logger.debug(f"Found @mention: {mention_text}")
                 
-                # Mention by tapping contact (no username) - MessageEntityMentionName
-                elif hasattr(ent, 'type') and ent.type == 'mention_name':
-                    # Extract the text that was mentioned
-                    mention_text = message_text[ent.offset : ent.offset + ent.length]
-                    mentions.append(mention_text)
-                    logger.debug(f"✅ Found contact mention: {mention_text}")
-                
-                # Text mention (when user has no username)
-                elif hasattr(ent, 'type') and ent.type == 'text_mention':
-                    # This contains user_id, we can use it directly
-                    if hasattr(ent, 'user') and ent.user:
-                        user_info = ent.user
+                # Handle direct user mentions (when someone taps on a contact)
+                elif hasattr(entity, 'type') and entity.type == 'text_mention':
+                    if hasattr(entity, 'user') and entity.user:
+                        user = entity.user
                         # Create user entry if not exists
                         user_data = {
-                            'user_id': user_info.id,
-                            'username': user_info.username or user_info.first_name,
-                            'first_name': user_info.first_name,
-                            'last_name': user_info.last_name,
-                            'is_admin': user_info.id in self.admin_ids,
+                            'user_id': user.id,
+                            'username': user.username or user.first_name,
+                            'first_name': user.first_name,
+                            'last_name': user.last_name,
+                            'is_admin': user.id in self.admin_ids,
                             'last_active': datetime.now(),
                             'balance': 0
                         }
                         
                         # Insert or update user
                         users_collection.update_one(
-                            {'user_id': user_info.id},
+                            {'user_id': user.id},
                             {
                                 '$set': user_data,
                                 '$setOnInsert': {'created_at': datetime.now()}
@@ -221,20 +213,43 @@ class LudoManagerBot:
                             upsert=True
                         )
                         
-                        logger.info(f"✅ Created/updated user from text mention: {user_info.first_name}")
-                        mentions.append(user_info.first_name)
-                    else:
-                        # Fallback: extract text
-                        mention_text = message_text[ent.offset : ent.offset + ent.length]
+                        # Add the mention text (usually first name)
+                        mention_text = message_text[entity.offset:entity.offset + entity.length]
                         mentions.append(mention_text)
-                        logger.debug(f"✅ Found text mention: {mention_text}")
+                        logger.info(f"✅ Created/updated user from text_mention: {user.first_name}")
+                        logger.debug(f"Found text_mention: {mention_text}")
             
-            logger.info(f"📝 Extracted {len(mentions)} mentions: {mentions}")
+            if not mentions:
+                logger.debug("No entities found, falling back to regex parsing")
+                return self._extract_mentions_with_regex(message_text)
+            
+            logger.info(f"✅ Extracted {len(mentions)} mentions using entities: {mentions}")
             return mentions
             
         except Exception as e:
-            logger.error(f"❌ Error extracting mentions: {e}")
+            logger.error(f"❌ Error extracting mentions from entities: {e}")
+            logger.debug("Falling back to regex parsing")
+            return self._extract_mentions_with_regex(message_text)
+
+    def _extract_mentions_with_regex(self, message_text: str) -> List[str]:
+        """Fallback regex-based mention extraction for when entities are not available"""
+        mentions = []
+        try:
+            # Extract username with or without @ (support both username and first name)
+            matches = re.findall(r"@?([a-zA-Z0-9_\u00C0-\u017F\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF\u0E00-\u0E7F\u0E80-\u0EFF\u0F00-\u0F7F\u0F80-\u0FFF\u1000-\u109F\u10A0-\u10FF\u1100-\u11FF\u1200-\u137F\u1380-\u139F\u13A0-\u13FF\u1400-\u167F\u1680-\u169F\u16A0-\u16FF\u1700-\u171F\u1720-\u173F\u1740-\u175F\u1760-\u177F\u1780-\u17FF\u1800-\u18AF\u1900-\u194F\u1950-\u197F\u1980-\u19DF\u19E0-\u19FF\u1A00-\u1A1F\u1A20-\u1AAF\u1AB0-\u1AFF\u1B00-\u1B7F\u1B80-\u1BBF\u1BC0-\u1BFF\u1C00-\u1C4F\u1C50-\u1C7F\u1C80-\u1CDF\u1CD0-\u1CFF\u1D00-\u1D7F\u1D80-\u1DBF\u1DC0-\u1DFF\u1E00-\u1EFF\u1F00-\u1FFF\u2000-\u206F\u2070-\u209F\u20A0-\u20CF\u20D0-\u20FF\u2100-\u214F\u2150-\u218F\u2190-\u21FF\u2200-\u22FF\u2300-\u23FF\u2400-\u243F\u2440-\u245F\u2460-\u24FF\u2500-\u257F\u2580-\u259F\u25A0-\u25FF\u2600-\u26FF\u2700-\u27BF\u27C0-\u27EF\u27F0-\u27FF\u2800-\u28FF\u2900-\u297F\u2980-\u29FF\u2A00-\u2AFF\u2B00-\u2BFF\u2C00-\u2C5F\u2C60-\u2C7F\u2C80-\u2CFF\u2D00-\u2D2F\u2D30-\u2D7F\u2D80-\u2DDF\u2DE0-\u2DFF\u2E00-\u2E7F\u2E80-\u2EFF\u2F00-\u2FDF\u2FE0-\u2FEF\u2FF0-\u2FFF\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3100-\u312F\u3130-\u318F\u3190-\u319F\u31A0-\u31BF\u31C0-\u31EF\u31F0-\u31FF\u3200-\u32FF\u3300-\u33FF\u3400-\u4DBF\u4DC0-\u4DFF\u4E00-\u9FFF\uA000-\uA48F\uA490-\uA4CF\uA4D0-\uA4FF\uA500-\uA63F\uA640-\uA69F\uA6A0-\uA6FF\uA700-\uA71F\uA720-\uA7FF\uA800-\uA82F\uA830-\uA83F\uA840-\uA87F\uA880-\uA8DF\uA8E0-\uA8FF\uA900-\uA92F\uA930-\uA95F\uA960-\uA97F\uA980-\uA9DF\uA9E0-\uA9FF\uAA00-\uAA5F\uAA60-\uAA7F\uAA80-\uAADF\uAAE0-\uAAFF\uAB00-\uAB2F\uAB30-\uAB6F\uAB70-\uABBF\uABC0-\uABFF\uAC00-\uD7AF\uD7B0-\uD7FF\uD800-\uDB7F\uDB80-\uDBFF\uDC00-\uDFFF\uE000-\uF8FF\uF900-\uFAFF\uFB00-\uFB4F\uFB50-\uFDFF\uFE00-\uFE0F\uFE10-\uFE1F\uFE20-\uFE2F\uFE30-\uFE4F\uFE50-\uFE6F\uFE70-\uFEFF\uFF00-\uFFEF\uFFF0-\uFFFF]+)", message_text)
+            for match in matches:
+                username = match
+                # Filter out common non-username words
+                if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
+                    mentions.append(username)
+                    logger.debug(f"👥 Player found via regex: {username}")
+            
+            logger.info(f"✅ Extracted {len(mentions)} mentions using regex: {mentions}")
             return mentions
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting mentions with regex: {e}")
+            return []
 
     async def start_bot(self):
         """Start the main bot application"""
@@ -422,28 +437,19 @@ class LudoManagerBot:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
     
-    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, entities: List = None) -> Optional[Dict]:
-        """Extract game data from message text using simplified line-by-line processing"""
+    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, message_entities: List = None) -> Optional[Dict]:
+        """Extract game data from message text using Telegram entities for mentions (more reliable)"""
         try:
             logger.info(f"📄 Processing game table message...")
             logger.info(f"📝 Message content: {message_text}")
             
-            # Test regex pattern for debugging
-            test_line = "1k Full"
-            test_match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", test_line)
-            if test_match:
-                logger.info(f"✅ Regex test passed: '{test_line}' -> '{test_match.group(1)}'")
-            else:
-                logger.error(f"❌ Regex test failed: '{test_line}'")
-            
-            lines = message_text.strip().split("\n")
-            usernames = []
+            # Extract mentions using the new entity-based system
+            usernames = self._extract_mentions_from_message(message_text, message_entities)
             amount = None
-    
+            
+            # Look for amount with "Full" keyword
+            lines = message_text.strip().split("\n")
             for line in lines:
-                logger.debug(f"🔍 Processing line: {line}")
-                
-                # Look for amount with "Full" keyword (support both regular numbers and k format)
                 if "full" in line.lower():
                     # Support both formats: "1000 Full", "1k Full", "10k Full", etc.
                     logger.debug(f"🔍 Processing amount line: '{line}'")
@@ -458,17 +464,9 @@ class LudoManagerBot:
                         else:
                             amount = int(amount_str)
                             logger.info(f"💰 Regular amount found: {amount_str} = ₹{amount}")
+                        break
                     else:
                         logger.warning(f"⚠️ No amount match found in line: '{line}'")
-                else:
-                    # Extract username with or without @ (support both username and first name)
-                    match = re.search(r"@?([a-zA-Z0-9_\u00C0-\u017F\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF\u0E00-\u0E7F\u0E80-\u0EFF\u0F00-\u0F7F\u0F80-\u0FFF\u1000-\u109F\u10A0-\u10FF\u1100-\u11FF\u1200-\u137F\u1380-\u139F\u13A0-\u13FF\u1400-\u167F\u1680-\u169F\u16A0-\u16FF\u1700-\u171F\u1720-\u173F\u1740-\u175F\u1760-\u177F\u1780-\u17FF\u1800-\u18AF\u1900-\u194F\u1950-\u197F\u1980-\u19DF\u19E0-\u19FF\u1A00-\u1A1F\u1A20-\u1AAF\u1AB0-\u1AFF\u1B00-\u1B7F\u1B80-\u1BBF\u1BC0-\u1BFF\u1C00-\u1C4F\u1C50-\u1C7F\u1C80-\u1CDF\u1CD0-\u1CFF\u1D00-\u1D7F\u1D80-\u1DBF\u1DC0-\u1DFF\u1E00-\u1EFF\u1F00-\u1FFF\u2000-\u206F\u2070-\u209F\u20A0-\u20CF\u20D0-\u20FF\u2100-\u214F\u2150-\u218F\u2190-\u21FF\u2200-\u22FF\u2300-\u23FF\u2400-\u243F\u2440-\u245F\u2460-\u24FF\u2500-\u257F\u2580-\u259F\u25A0-\u25FF\u2600-\u26FF\u2700-\u27BF\u27C0-\u27EF\u27F0-\u27FF\u2800-\u28FF\u2900-\u297F\u2980-\u29FF\u2A00-\u2AFF\u2B00-\u2BFF\u2C00-\u2C5F\u2C60-\u2C7F\u2C80-\u2CFF\u2D00-\u2D2F\u2D30-\u2D7F\u2D80-\u2DDF\u2DE0-\u2DFF\u2E00-\u2E7F\u2E80-\u2EFF\u2F00-\u2FDF\u2FE0-\u2FEF\u2FF0-\u2FFF\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3100-\u312F\u3130-\u318F\u3190-\u319F\u31A0-\u31BF\u31C0-\u31EF\u31F0-\u31FF\u3200-\u32FF\u3300-\u33FF\u3400-\u4DBF\u4DC0-\u4DFF\u4E00-\u9FFF\uA000-\uA48F\uA490-\uA4CF\uA4D0-\uA4FF\uA500-\uA63F\uA640-\uA69F\uA6A0-\uA6FF\uA700-\uA71F\uA720-\uA7FF\uA800-\uA82F\uA830-\uA83F\uA840-\uA87F\uA880-\uA8DF\uA8E0-\uA8FF\uA900-\uA92F\uA930-\uA95F\uA960-\uA97F\uA980-\uA9DF\uA9E0-\uA9FF\uAA00-\uAA5F\uAA60-\uAA7F\uAA80-\uAADF\uAAE0-\uAAFF\uAB00-\uAB2F\uAB30-\uAB6F\uAB70-\uABBF\uABC0-\uABFF\uAC00-\uD7AF\uD7B0-\uD7FF\uD800-\uDB7F\uDB80-\uDBFF\uDC00-\uDFFF\uE000-\uF8FF\uF900-\uFAFF\uFB00-\uFB4F\uFB50-\uFDFF\uFE00-\uFE0F\uFE10-\uFE1F\uFE20-\uFE2F\uFE30-\uFE4F\uFE50-\uFE6F\uFE70-\uFEFF\uFF00-\uFFEF\uFFF0-\uFFFF]+)", line)
-                    if match:
-                        username = match.group(1)
-                        # Filter out common non-username words
-                        if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
-                            usernames.append(username)
-                            logger.info(f"👥 Player found: {username}")
     
             if not usernames or not amount:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
@@ -528,7 +526,8 @@ class LudoManagerBot:
                 update.message.text,
                 update.effective_user.id,
                 update.message.message_id,
-                update.effective_chat.id
+                update.effective_chat.id,
+                update.message.entities  # Pass message entities for proper mention detection
             )
             
             if game_data:
@@ -868,7 +867,7 @@ class LudoManagerBot:
                 if not user_data:
                     logger.warning(f"⚠️ Winner {username} not found in database")
                     continue
-                
+                    
                 # Get user's custom commission rate (default to 0 if not set)
                 user_commission_rate = user_data.get('commission_rate', 0)
                 
@@ -1205,7 +1204,7 @@ class LudoManagerBot:
             "• Add ✅ after the winner's username\n"
             "• Example: @player1 ✅\n"
             "• Bot will detect the edit and process results\n\n"
-                        "Example table format:\n"
+            "Example table format:\n"
             "@player1\n"
             "@player2\n"
             "400 Full\n\n"
@@ -1215,8 +1214,10 @@ class LudoManagerBot:
             "**User mentions supported:**\n"
             "• Username: @username\n"
             "• First name: @FirstName\n"
+            "• Direct contact tap (no @ needed)\n"
             "• Works even without @ symbol\n"
-            "• Supports international characters\n\n"
+            "• Supports international characters\n"
+            "• Uses Telegram's native mention system\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/activegames - Show all currently running games\n"
