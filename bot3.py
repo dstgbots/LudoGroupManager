@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import pyrogram
 from pyrogram import Client, filters as pyrogram_filters
 from pyrogram.types import Message, MessageEntity
+from pyrogram.enums import ParseMode as PyroParseMode
 
 # Try to import Pyrogram enums, fallback to string constants if not available
 try:
@@ -481,66 +482,58 @@ class LudoManagerBot:
                         return
                     
                     # Check if it contains ✅ marks (indicating winners)
-                    winner = self._extract_winner_from_edited_message(message.text)
+                    winner_info = self._extract_winner_from_edited_message(message.text, message.entities)
                     
-                    if not winner:
+                    if not winner_info:
                         logger.info("❌ No winners found in edited message")
                         return
                     
-                    logger.info(f"🏆 Winner extracted: {winner}")
+                    logger.info(f"🏆 Winner info extracted: {winner_info}")
                     
                     # Check if this is a game we're tracking
                     if msg_id_str in self.active_games:
                         logger.info(f"✅ Found matching game for edited message")
                         game_data = self.active_games.pop(msg_id_str)
                         
-                                    # Find the actual winner player from the game data
+                                    # Find the actual winner player from the game data using priority matching
                         winner_player = None
-                        logger.info(f"🔍 Looking for winner '{winner}' in game players: {game_data['players']}")
+                        logger.info(f"🔍 Looking for winner '{winner_info}' in game players: {game_data['players']}")
                         
-                        for player in game_data['players']:
-                            player_username = player.get('username', '')
-                            player_user_id = player.get('user_id')
-                            player_first_name = player.get('first_name', '')
-                            
-                            logger.info(f"🔍 Checking player: username='{player_username}', user_id='{player_user_id}', first_name='{player_first_name}'")
-                            
-                            # Check if this player matches the winner by multiple criteria
-                            is_match = False
-                            
-                            # 1. Direct username match
-                            if player_username == winner:
-                                is_match = True
-                                logger.info(f"✅ Username match: '{player_username}' == '{winner}'")
-                            
-                            # 2. User ID match (if winner is a number)
-                            elif player_user_id and str(player_user_id) == winner:
-                                is_match = True
-                                logger.info(f"✅ User ID match: {player_user_id} == {winner}")
-                            
-                            # 3. First name match (case-insensitive)
-                            elif player_first_name and player_first_name.lower() == winner.lower():
-                                is_match = True
-                                logger.info(f"✅ First name match: '{player_first_name}' == '{winner}'")
-                            
-                            # 4. Handle text_mention users (username format: user_123456)
-                            elif player_username.startswith('user_') and player_user_id:
-                                # If winner is a name, check if it matches the first_name
-                                if player_first_name and player_first_name.lower() == winner.lower():
-                                    is_match = True
-                                    logger.info(f"✅ Text_mention first name match: '{player_first_name}' == '{winner}'")
-                            
-                            # 5. Handle @username mentions (remove @ and compare)
-                            elif winner.startswith('@'):
-                                clean_winner = winner[1:]  # Remove @
-                                if player_username == clean_winner:
-                                    is_match = True
-                                    logger.info(f"✅ @username match: '{player_username}' == '{clean_winner}'")
-                            
-                            if is_match:
-                                winner_player = player
-                                logger.info(f"🎯 Winner player found: {winner_player}")
-                                break
+                        # Priority 1: Match by user_id (exact match for text_mention)
+                        if winner_info.get('type') == 'text_mention' and winner_info.get('user_id'):
+                            target_user_id = winner_info['user_id']
+                            for player in game_data['players']:
+                                if player.get('user_id') == target_user_id:
+                                    winner_player = player
+                                    logger.info(f"🎯 Winner found by user_id (exact): {winner_player}")
+                                    break
+                        
+                        # Priority 2: Match by username (case-insensitive for @mention)
+                        if not winner_player and winner_info.get('type') == 'mention':
+                            target_username = winner_info.get('username', '').lower()
+                            for player in game_data['players']:
+                                if player.get('username', '').lower() == target_username:
+                                    winner_player = player
+                                    logger.info(f"🎯 Winner found by username (case-insensitive): {winner_player}")
+                                    break
+                        
+                        # Priority 3: Match by display_name (full match, then partial)
+                        if not winner_player:
+                            target_display_name = winner_info.get('display_name', '').lower()
+                            for player in game_data['players']:
+                                player_display_name = player.get('display_name', '').lower()
+                                
+                                # Full match first
+                                if player_display_name == target_display_name:
+                                    winner_player = player
+                                    logger.info(f"🎯 Winner found by display_name (full match): {winner_player}")
+                                    break
+                                
+                                # Partial match (check if target is contained in player name)
+                                elif target_display_name in player_display_name:
+                                    winner_player = player
+                                    logger.info(f"🎯 Winner found by display_name (partial match): {winner_player}")
+                                    break
                         
                         if winner_player:
                             logger.info(f"✅ Found winner player: {winner_player}")
@@ -548,12 +541,12 @@ class LudoManagerBot:
                                 'username': winner_player['username'], 
                                 'bet_amount': winner_player['bet_amount'], 
                                 'user_id': winner_player.get('user_id'),
-                                'first_name': winner_player.get('first_name', '')
+                                'display_name': winner_player.get('display_name', '')
                             }]
                         else:
-                            logger.warning(f"⚠️ Winner '{winner}' not found in game players, using fallback")
-                            logger.warning(f"⚠️ Available players: {[p.get('username', '') for p in game_data['players']]}")
-                            winners = [{'username': winner, 'bet_amount': game_data['bet_amount']}]
+                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
+                            logger.warning(f"⚠️ Available players: {[p.get('display_name', '') for p in game_data['players']]}")
+                            winners = [{'username': winner_info.get('display_name', 'Unknown'), 'bet_amount': game_data['bet_amount']}]
                         
                         # Process the game result
                         await self.process_game_result_from_winner(game_data, winners, message)
@@ -569,61 +562,79 @@ class LudoManagerBot:
             logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
     
-    def _extract_winner_from_edited_message(self, message_text: str) -> Optional[str]:
-        """Extract winner username from edited message text with proper error handling"""
+    def _extract_winner_from_edited_message(self, message_text: str, message_entities: List = None) -> Optional[Dict]:
+        """Extract winner information from edited message using entities + line with ✅"""
         try:
             logger.info(f"🔍 Extracting winner from message: {message_text}")
+            logger.info(f"🔍 Message entities: {message_entities}")
             
-            # Look for username with ✅ mark using multiple patterns
-            patterns = [
-                r'@([a-zA-Z0-9_]+)\s*✅',  # Username + space + checkmark
-                r'@([a-zA-Z0-9_]+)✅',     # Username + checkmark (no space)
-                r'([a-zA-Z0-9_]+)\s*✅',   # Just username (no @) + checkmark
-                r'([a-zA-Z0-9_]+)✅',      # Just username (no @) + checkmark (no space)
-                r'([^\n]+)\s*✅',          # Any text (not containing newline) + checkmark
-                r'✅\s*([^\n]+)'           # Checkmark followed by any text
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, message_text)
-                if match:
-                    # Extract the winner text
-                    winner_text = match.group(1).strip()
-                    logger.info(f"✅ Winner extracted using pattern '{pattern}': '{winner_text}'")
-                    
-                    # For text_mention users, we want to preserve the first name
-                    # Only clean up if it's clearly a username format
-                    if winner_text.startswith('@'):
-                        # Remove @ for @username mentions
-                        clean_winner = winner_text[1:]
-                        logger.info(f"✅ Cleaned @username: '{clean_winner}'")
-                        return clean_winner
-                    else:
-                        # For text_mention users, preserve the original text (first name)
-                        # Only remove extra whitespace and newlines
-                        clean_winner = re.sub(r'[\n\r\t]', '', winner_text).strip()
-                        logger.info(f"✅ Preserved text_mention name: '{clean_winner}'")
-                        return clean_winner
-            
-            # Try line-by-line approach as fallback
+            # Split message into lines and find lines with ✅
             lines = message_text.split('\n')
-            for line in lines:
-                if '✅' in line:
-                    # Extract any text before the checkmark
-                    match = re.search(r'(.*)\s*✅', line)
-                    if match:
-                        winner_text = match.group(1).strip()
-                        # Remove @ if present
-                        if winner_text.startswith('@'):
-                            winner_text = winner_text[1:]
-                        
-                        # Clean up but preserve the name
-                        clean_winner = re.sub(r'[\n\r\t]', '', winner_text).strip()
-                        logger.info(f"✅ Winner extracted from line '{line}': '{clean_winner}'")
-                        return clean_winner
+            winner_info = None
             
-            logger.warning("❌ Could not extract winner from message: " + message_text)
+            for line_num, line in enumerate(lines):
+                if '✅' in line:
+                    logger.info(f"🔍 Found ✅ in line {line_num}: '{line}'")
+                    
+                    # Extract text before ✅
+                    match = re.search(r'(.*)\s*✅', line)
+                    if not match:
+                        continue
+                    
+                    winner_text = match.group(1).strip()
+                    logger.info(f"🔍 Winner text extracted: '{winner_text}'")
+                    
+                    # Check if this line has entities (text_mention or mention)
+                    if message_entities:
+                        # Find entities that overlap with this line
+                        line_start = message_text.find(line)
+                        line_end = line_start + len(line)
+                        
+                        for entity in message_entities:
+                            entity_start = getattr(entity, 'offset', 0)
+                            entity_end = entity_start + getattr(entity, 'length', 0)
+                            
+                            # Check if entity overlaps with the line containing ✅
+                            if (entity_start < line_end and entity_end > line_start):
+                                logger.info(f"🔍 Found overlapping entity: type={getattr(entity, 'type', 'unknown')}")
+                                
+                                if getattr(entity, 'type', '') == "text_mention":
+                                    # Gold standard: we have the user ID
+                                    user = getattr(entity, 'user', None)
+                                    if user:
+                                        winner_info = {
+                                            'type': 'text_mention',
+                                            'user_id': user.id,
+                                            'display_name': winner_text,
+                                            'username': user.username or f"user_{user.id}"
+                                        }
+                                        logger.info(f"✅ Winner found via text_mention: {winner_info}")
+                                        return winner_info
+                                
+                                elif getattr(entity, 'type', '') == "mention":
+                                    # @username mention
+                                    mention_text = message_text[entity_start:entity_end]
+                                    username = mention_text.lstrip('@')
+                                    winner_info = {
+                                        'type': 'mention',
+                                        'username': username,
+                                        'display_name': winner_text
+                                    }
+                                    logger.info(f"✅ Winner found via @mention: {winner_info}")
+                                    return winner_info
+                    
+                    # Fallback: no entities, use the full text before ✅
+                    winner_info = {
+                        'type': 'fallback',
+                        'display_name': winner_text,
+                        'username': winner_text.lstrip('@') if winner_text.startswith('@') else winner_text
+                    }
+                    logger.info(f"✅ Winner found via fallback: {winner_info}")
+                    return winner_info
+            
+            logger.warning("❌ No winner found in message")
             return None
+            
         except Exception as e:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
@@ -750,6 +761,13 @@ class LudoManagerBot:
                 if user_data:
                     user_id = user_data['user_id']
                     username = user_data['username']
+                    first_name = user_data.get('first_name', '')
+                    last_name = user_data.get('last_name', '')
+                    
+                    # Create display name (e.g., "Gopal M")
+                    display_name = f"{first_name}"
+                    if last_name:
+                        display_name += f" {last_name}"
                     
                     # Check if we already have this user (by user_id or username)
                     if user_id in seen_user_ids or username in seen_usernames:
@@ -757,13 +775,14 @@ class LudoManagerBot:
                         continue
                     
                     valid_players.append({
-                        'username': username,
                         'user_id': user_id,
-                        'first_name': user_data.get('first_name', '')
+                        'username': username,
+                        'display_name': display_name,
+                        'bet_amount': amount
                     })
                     seen_user_ids.add(user_id)
                     seen_usernames.add(username)
-                    logger.info(f"✅ Valid player: {username} (ID: {user_id})")
+                    logger.info(f"✅ Valid player: {display_name} (ID: {user_id}, username: {username})")
             
             if not valid_players or not amount:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
@@ -781,7 +800,7 @@ class LudoManagerBot:
                 'admin_message_id': str(message_id),  # Store as string
                 'chat_id': chat_id,
                 'bet_amount': amount,
-                'players': [{'username': player['username'], 'user_id': player['user_id'], 'bet_amount': amount} for player in valid_players],
+                'players': valid_players,  # Already in correct format with user_id, username, display_name, bet_amount
                 'total_amount': amount * len(valid_players),
                 'status': 'active',
                 'created_at': datetime.now(),
