@@ -805,7 +805,6 @@ class LudoManagerBot:
                     await self.application.bot.send_message(
                         chat_id=user_data['user_id'],
                         text=(
-                            f"🎉 <b>Congratulations! You won!</b>\n\n"
                             f"💰 <b>Amount Credited:</b> ₹{final_winner_amount}\n\n"
                             f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
                             f"💸 <a href='https://telegram.me/SOMYA_000'>Click to instant Withdraw</a>\n\n"
@@ -1213,14 +1212,14 @@ class LudoManagerBot:
             
             # Notify user
             try:
-                user_balance_display = f"₹{new_balance}"
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
                     text=(
-                        f"💰 Balance Added!\n"
-                        f"₹{amount} has been added to your account by admin.\n"
-                        f"New balance: {user_balance_display}"
-                    )
+                        f"💰 <b>Deposit Balance Added</b>\n\n"
+                        f"₹{amount} your account by admin.\n\n"
+                        f"<b>Update balance:</b> ₹{new_balance}"
+                    ),
+                    parse_mode="HTML"
                 )
             except Exception as e:
                 logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
