@@ -321,11 +321,11 @@ class LudoManagerBot:
         """Automatically detect and process game tables when admins send messages with 'Full' keyword"""
         if not self.is_configured_group(update.effective_chat.id):
             return
-
+    
         # Only admins can create game tables
         if update.effective_user.id not in self.admin_ids:
             return
-
+    
         # Check if message contains "Full" keyword
         if "Full" in update.message.text or "full" in update.message.text:
             logger.info("📝 Detected potential game table from admin")
@@ -345,8 +345,8 @@ class LudoManagerBot:
                 logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                 logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                 
-                # Send confirmation to group
-                await self._send_group_confirmation(update.effective_chat.id)
+                # Send confirmation to group - FIXED: Pass context as first parameter
+                await self._send_group_confirmation(context, update.effective_chat.id)
                 
                 # Send winner selection message to admin's DM
                 await self._send_winner_selection_to_admin(
@@ -355,7 +355,7 @@ class LudoManagerBot:
                 )
             else:
                 logger.warning("❌ Failed to extract game data from message")
-
+    
     async def _send_group_confirmation(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         """Send confirmation message to group"""
         try:
@@ -371,11 +371,11 @@ class LudoManagerBot:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=confirmation_msg,
-                parse_mode="MarkdownV2"  # Note the capitalization and V2
+                parse_mode="MarkdownV2"  # Must be MarkdownV2 for PTB v20+
             )
         except Exception as e:
             logger.error(f"❌ Error sending group confirmation: {e}")
-
+    
     async def _send_winner_selection_to_admin(self, game_data: Dict, admin_user_id: int):
         """Send winner selection message to admin's DM"""
         if not self.pyro_client or not self.pyro_client.is_connected:
@@ -386,23 +386,29 @@ class LudoManagerBot:
             # Create inline keyboard for winner selection
             keyboard = []
             for player in game_data['players']:
+                username = player['username']
+                # Properly escape special characters for Markdown
+                clean_username = re.sub(r'[_*[\]()~`>#+\-=|{}.!]', r'\\\g<0>', username)
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"🏆 {player['username']}", 
-                        callback_data=f"winner_{game_data['game_id']}_{player['username']}"
+                        f"🏆 {clean_username}", 
+                        callback_data=f"winner_{game_data['game_id']}_{username}"
                     )
                 ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
+            # Prepare message with proper Markdown formatting
+            players_list = ", ".join([f"@{p['username']}" for p in game_data['players']])
+            
             # Send message to admin's DM
             await self.pyro_client.send_message(
                 chat_id=admin_user_id,
                 text=(
-                    f"🎮 **Game Table Processed!**\n\n"
-                    f"**Players:** {', '.join([p['username'] for p in game_data['players']])}\n"
-                    f"**Amount:** ₹{game_data['total_amount']}\n\n"
-                    f"**Select the winner:**"
+                    f"🎮 *Game Table Processed!*\n\n"
+                    f"*Players:* {players_list}\n"
+                    f"*Amount:* ₹{game_data['total_amount']}\n\n"
+                    f"*Select the winner:*"
                 ),
                 reply_markup=reply_markup,
                 parse_mode="markdown"
