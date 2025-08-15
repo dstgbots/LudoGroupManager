@@ -289,6 +289,14 @@ class LudoManagerBot:
             logger.info(f"📄 Processing game table message...")
             logger.info(f"📝 Message content: {message_text}")
             
+            # Test regex pattern for debugging
+            test_line = "1k Full"
+            test_match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", test_line)
+            if test_match:
+                logger.info(f"✅ Regex test passed: '{test_line}' -> '{test_match.group(1)}'")
+            else:
+                logger.error(f"❌ Regex test failed: '{test_line}'")
+            
             lines = message_text.strip().split("\n")
             usernames = []
             amount = None
@@ -299,15 +307,20 @@ class LudoManagerBot:
                 # Look for amount with "Full" keyword (support both regular numbers and k format)
                 if "full" in line.lower():
                     # Support both formats: "1000 Full", "1k Full", "10k Full", etc.
+                    logger.debug(f"🔍 Processing amount line: '{line}'")
                     match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", line)
                     if match:
                         amount_str = match.group(1)
+                        logger.debug(f"🔍 Matched amount string: '{amount_str}'")
                         # Convert k format to actual number
                         if amount_str.lower().endswith('k'):
                             amount = int(amount_str[:-1]) * 1000
+                            logger.info(f"💰 K format amount found: {amount_str} = ₹{amount}")
                         else:
                             amount = int(amount_str)
-                        logger.info(f"💰 Amount found: {amount_str} = ₹{amount}")
+                            logger.info(f"💰 Regular amount found: {amount_str} = ₹{amount}")
+                    else:
+                        logger.warning(f"⚠️ No amount match found in line: '{line}'")
                 else:
                     # Extract username with or without @
                     match = re.search(r"@?([a-zA-Z0-9_]+)", line)
@@ -424,9 +437,21 @@ class LudoManagerBot:
             
             for line in lines:
                 if "full" in line.lower():
-                    match = re.search(r"(\d+)\s*[Ff]ull", line)
+                    # Support both formats: "1000 Full", "1k Full", "10k Full", etc.
+                    logger.debug(f"🔍 Rejection check - Processing amount line: '{line}'")
+                    match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", line)
                     if match:
-                        amount = int(match.group(1))
+                        amount_str = match.group(1)
+                        logger.debug(f"🔍 Rejection check - Matched amount string: '{amount_str}'")
+                        # Convert k format to actual number
+                        if amount_str.lower().endswith('k'):
+                            amount = int(amount_str[:-1]) * 1000
+                            logger.debug(f"🔍 Rejection check - K format amount: {amount_str} = ₹{amount}")
+                        else:
+                            amount = int(amount_str)
+                            logger.debug(f"🔍 Rejection check - Regular amount: {amount_str} = ₹{amount}")
+                    else:
+                        logger.warning(f"⚠️ Rejection check - No amount match found in line: '{line}'")
                 else:
                     match = re.search(r"@?([a-zA-Z0-9_]+)", line)
                     if match:
