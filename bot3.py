@@ -1121,17 +1121,24 @@ class LudoManagerBot:
                     
                     # Notify winner
                     try:
+                        # Generate link to the original game table message
+                        table_link = self._generate_message_link(
+                            game_data['chat_id'], 
+                            int(game_data['admin_message_id'])
+                        )
+                        
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=(
-                                f"🎉 *Congratulations! You won!*\n\n"
-                                f"*Game:* {game_data['game_id']}\n"
-                                f"*Winnings:* ₹{winner_amount}\n"
-                                f"*New Balance:* ₹{new_balance}"
+                                f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n\n"
+                                f"📊 <b>Updated Balance: ₹{new_balance}</b>\n\n"
+                                f"💸 Click to instant Withdraw (https://telegram.me/SOMYA_000)\n\n"
+                                f"🔍 <a href='{table_link}'>View Table</a> 👈"
                             ),
-                            parse_mode="MarkdownV2"
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
                         )
-                        logger.info(f"✅ Notification sent to winner {user_data['user_id']}")
+                        logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
                     except Exception as e:
                         logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
                 else:
