@@ -862,8 +862,8 @@ class LudoManagerBot:
                 logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                 logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                 
-                # Send confirmation to group - FIXED: Properly escaped for MarkdownV2
-                await self._send_group_confirmation(context, update.effective_chat.id)
+                # Removed noisy group confirmation message per user request
+                # await self._send_group_confirmation(context, update.effective_chat.id)
                 
                 # Send winner selection message to admin's DM
                 await self._send_winner_selection_to_admin(
