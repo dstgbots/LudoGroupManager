@@ -632,6 +632,20 @@ class LudoManagerBot:
             logger.info("📝 Detected potential game table from admin")
             logger.info(f"🔍 Message entities: {update.message.entities}")
             
+            # Log detailed entity information for game tables
+            if update.message.entities:
+                logger.info(f"🔍 Game table has {len(update.message.entities)} entities:")
+                for i, entity in enumerate(update.message.entities):
+                    logger.info(f"   Entity {i+1}: type={getattr(entity, 'type', 'unknown')}, "
+                              f"offset={getattr(entity, 'offset', 'unknown')}, "
+                              f"length={getattr(entity, 'length', 'unknown')}")
+                    if hasattr(entity, 'user') and entity.user:
+                        logger.info(f"     User: ID={entity.user.id}, "
+                                  f"Username={entity.user.username or 'None'}, "
+                                  f"FirstName={entity.user.first_name or 'None'}")
+            else:
+                logger.info("🔍 Game table has no entities")
+            
             # Extract game data using message entities
             game_data = await self._extract_game_data_from_message(
                 update.message.text,
@@ -1060,6 +1074,7 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("ping", self.ping_command))
+        application.add_handler(CommandHandler("debugmessage", self.debug_message_command))
         application.add_handler(CommandHandler("testmentions", self.test_mentions_command))
         application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("balance", self.balance_command))
@@ -1194,6 +1209,77 @@ class LudoManagerBot:
             else:
                 await update.message.reply_text(error_msg)
             
+    async def debug_message_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /debugmessage command - show raw message data for debugging"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        try:
+            message = update.message
+            message_text = "🔍 **Message Debug Information**\n\n"
+            
+            # Basic message info
+            message_text += f"**📱 Message Details:**\n"
+            message_text += f"• Message ID: `{message.message_id}`\n"
+            message_text += f"• Chat ID: `{message.chat.id}`\n"
+            message_text += f"• Chat Type: `{message.chat.type}`\n"
+            message_text += f"• From User ID: `{message.from_user.id}`\n"
+            message_text += f"• From Username: `{message.from_user.username or 'None'}`\n"
+            message_text += f"• From First Name: `{message.from_user.first_name or 'None'}`\n"
+            message_text += f"• Date: `{message.date}`\n\n"
+            
+            # Message text
+            message_text += f"**📝 Message Text:**\n`{message.text}`\n\n"
+            
+            # Message entities
+            if message.entities:
+                message_text += f"**🔍 Message Entities ({len(message.entities)}):**\n"
+                for i, entity in enumerate(message.entities):
+                    message_text += f"\n**Entity {i+1}:**\n"
+                    message_text += f"• Type: `{getattr(entity, 'type', 'unknown')}`\n"
+                    message_text += f"• Offset: `{getattr(entity, 'offset', 'unknown')}`\n"
+                    message_text += f"• Length: `{getattr(entity, 'length', 'unknown')}`\n"
+                    
+                    # Check if it's a Pyrogram entity
+                    if hasattr(entity, '__class__'):
+                        message_text += f"• Class: `{entity.__class__.__name__}`\n"
+                    
+                    # Check for user info
+                    if hasattr(entity, 'user') and entity.user:
+                        message_text += f"• User ID: `{entity.user.id}`\n"
+                        message_text += f"• Username: `{entity.user.username or 'None'}`\n"
+                        message_text += f"• First Name: `{entity.user.first_name or 'None'}`\n"
+                        message_text += f"• Last Name: `{entity.user.last_name or 'None'}`\n"
+                    
+                    # Check for URL (for text_link entities)
+                    if hasattr(entity, 'url'):
+                        message_text += f"• URL: `{entity.url}`\n"
+                    
+                    # Check for language (for pre entities)
+                    if hasattr(entity, 'language'):
+                        message_text += f"• Language: `{entity.language}`\n"
+            else:
+                message_text += "**❌ No message entities found**\n"
+            
+            # Raw message object info
+            message_text += f"\n**🔧 Raw Message Object:**\n"
+            message_text += f"• Class: `{message.__class__.__name__}`\n"
+            message_text += f"• Module: `{message.__class__.__module__}`\n"
+            
+            # Check for additional attributes
+            additional_attrs = ['forward_from', 'reply_to_message', 'edit_date', 'media_group_id']
+            for attr in additional_attrs:
+                if hasattr(message, attr):
+                    value = getattr(message, attr)
+                    message_text += f"• {attr}: `{value}`\n"
+            
+            await self.send_group_response(update, context, message_text)
+            
+        except Exception as e:
+            logger.error(f"Error in debug_message command: {e}")
+            await self.send_group_response(update, context, f"❌ Error debugging message: {str(e)}")
+
     async def test_mentions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /testmentions command - test mention detection"""
         if update.effective_user.id not in self.admin_ids:
@@ -1332,6 +1418,7 @@ class LudoManagerBot:
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/ping - Check if bot is running\n"
+            "/debugmessage - Show raw message data for debugging\n"
             "/testmentions - Test mention detection\n"
             "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
@@ -1406,6 +1493,30 @@ class LudoManagerBot:
         if user_id not in self.admin_ids:
             await self.send_group_response(update, context, f"❌ Only admins can use this command. Your ID: {user_id}")
             return
+        
+        # Log message entities for debugging
+        logger.info(f"🔍 /addbalance command received")
+        logger.info(f"🔍 Message text: '{update.message.text}'")
+        logger.info(f"🔍 Message entities: {update.message.entities}")
+        
+        if update.message.entities:
+            for i, entity in enumerate(update.message.entities):
+                logger.info(f"🔍 Entity {i+1}:")
+                logger.info(f"   Type: {getattr(entity, 'type', 'unknown')}")
+                logger.info(f"   Offset: {getattr(entity, 'offset', 'unknown')}")
+                logger.info(f"   Length: {getattr(entity, 'length', 'unknown')}")
+                
+                # Check if it's a Pyrogram entity
+                if hasattr(entity, '__class__'):
+                    logger.info(f"   Class: {entity.__class__.__name__}")
+                
+                # Check for user info
+                if hasattr(entity, 'user') and entity.user:
+                    logger.info(f"   User ID: {entity.user.id}")
+                    logger.info(f"   Username: {entity.user.username or 'None'}")
+                    logger.info(f"   First Name: {entity.user.first_name or 'None'}")
+        else:
+            logger.info(f"🔍 No message entities found")
             
         try:
             if len(context.args) < 2:
@@ -1489,6 +1600,30 @@ class LudoManagerBot:
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
+        
+        # Log message entities for debugging
+        logger.info(f"🔍 /withdraw command received")
+        logger.info(f"🔍 Message text: '{update.message.text}'")
+        logger.info(f"🔍 Message entities: {update.message.entities}")
+        
+        if update.message.entities:
+            for i, entity in enumerate(update.message.entities):
+                logger.info(f"🔍 Entity {i+1}:")
+                logger.info(f"   Type: {getattr(entity, 'type', 'unknown')}")
+                logger.info(f"   Offset: {getattr(entity, 'offset', 'unknown')}")
+                logger.info(f"   Length: {getattr(entity, 'length', 'unknown')}")
+                
+                # Check if it's a Pyrogram entity
+                if hasattr(entity, '__class__'):
+                    logger.info(f"   Class: {entity.__class__.__name__}")
+                
+                # Check for user info
+                if hasattr(entity, 'user') and entity.user:
+                    logger.info(f"   User ID: {entity.user.id}")
+                    logger.info(f"   Username: {entity.user.username or 'None'}")
+                    logger.info(f"   First Name: {entity.user.first_name or 'None'}")
+        else:
+            logger.info(f"🔍 No message entities found")
             
         try:
             if len(context.args) < 2:
@@ -1657,6 +1792,30 @@ class LudoManagerBot:
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
+        
+        # Log message entities for debugging
+        logger.info(f"🔍 /setcommission command received")
+        logger.info(f"🔍 Message text: '{update.message.text}'")
+        logger.info(f"🔍 Message entities: {update.message.entities}")
+        
+        if update.message.entities:
+            for i, entity in enumerate(update.message.entities):
+                logger.info(f"🔍 Entity {i+1}:")
+                logger.info(f"   Type: {getattr(entity, 'type', 'unknown')}")
+                logger.info(f"   Offset: {getattr(entity, 'offset', 'unknown')}")
+                logger.info(f"   Length: {getattr(entity, 'length', 'unknown')}")
+                
+                # Check if it's a Pyrogram entity
+                if hasattr(entity, '__class__'):
+                    logger.info(f"   Class: {entity.__class__.__name__}")
+                
+                # Check for user info
+                if hasattr(entity, 'user') and entity.user:
+                    logger.info(f"   User ID: {entity.user.id}")
+                    logger.info(f"   Username: {entity.user.username or 'None'}")
+                    logger.info(f"   First Name: {entity.user.first_name or 'None'}")
+        else:
+            logger.info(f"🔍 No message entities found")
             
         try:
             if len(context.args) < 2:
