@@ -78,6 +78,24 @@ class LudoManagerBot:
     def is_configured_group(self, chat_id: int) -> bool:
         """Check if the message is from the configured group"""
         return str(chat_id) == str(self.group_id)
+    
+    def _generate_message_link(self, chat_id: int, message_id: int) -> str:
+        """Generate a Telegram message link for the given chat and message"""
+        try:
+            # Convert chat_id to proper format for Telegram links
+            # For groups: remove -100 prefix from chat_id
+            if str(chat_id).startswith('-100'):
+                link_chat_id = str(chat_id)[4:]  # Remove '-100' prefix
+            else:
+                link_chat_id = str(chat_id).lstrip('-')  # Remove any minus sign
+            
+            # Create the Telegram message link
+            link = f"https://t.me/c/{link_chat_id}/{message_id}"
+            logger.info(f"view game table: {link}")
+            return link
+        except Exception as e:
+            logger.error(f"❌ Error generating message link: {e}")
+            return f"Message ID: {message_id}"
 
     async def start_bot(self):
         """Start the main bot application"""
@@ -438,6 +456,12 @@ class LudoManagerBot:
                     
                     # Notify player about bet deduction
                     try:
+                        # Generate link to the original game table message
+                        table_link = self._generate_message_link(
+                            game_data['chat_id'], 
+                            int(game_data['admin_message_id'])
+                        )
+                        
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=(
@@ -446,9 +470,11 @@ class LudoManagerBot:
                                 f"<b>Bet Amount:</b> ₹{bet_amount}\n"
                                 f"<b>Old Balance:</b> ₹{old_balance}\n"
                                 f"<b>New Balance:</b> ₹{new_balance}\n\n"
+                                f"📋 <a href='{table_link}'>View Game Table</a>\n\n"
                                 f"Good luck! 🍀"
                             ),
-                            parse_mode="HTML"
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
                         )
                         logger.info(f"✅ Bet notification sent to {username}")
                     except Exception as e:
@@ -635,15 +661,23 @@ class LudoManagerBot:
                 
                 # Notify winner
                 try:
+                    # Generate link to the original game table message
+                    table_link = self._generate_message_link(
+                        game_data['chat_id'], 
+                        int(game_data['admin_message_id'])
+                    )
+                    
                     await self.application.bot.send_message(
                         chat_id=user_data['user_id'],
                         text=(
                             f"🎉 <b>Congratulations! You won!</b>\n\n"
                             f"<b>Game:</b> {game_data['game_id']}\n"
                             f"<b>Winnings:</b> ₹{winner_amount}\n"
-                            f"<b>New Balance:</b> ₹{new_balance}"
+                            f"<b>New Balance:</b> ₹{new_balance}\n\n"
+                            f"📋 <a href='{table_link}'>View Game Table</a>"
                         ),
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
                     )
                     logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
                 except Exception as e:
@@ -665,6 +699,13 @@ class LudoManagerBot:
                         
                         if loser_data:
                             current_balance = loser_data.get('balance', 0)
+                            
+                            # Generate link to the original game table message
+                            table_link = self._generate_message_link(
+                                game_data['chat_id'], 
+                                int(game_data['admin_message_id'])
+                            )
+                            
                             await self.application.bot.send_message(
                                 chat_id=loser_data['user_id'],
                                 text=(
@@ -674,9 +715,11 @@ class LudoManagerBot:
                                     f"<b>Bet Amount:</b> ₹{player['bet_amount']}\n"
                                     f"<b>Winner:</b> @{winners[0]['username']}\n"
                                     f"<b>Your Balance:</b> ₹{current_balance}\n\n"
+                                    f"📋 <a href='{table_link}'>View Game Table</a>\n\n"
                                     f"Better luck next time! 🍀"
                                 ),
-                                parse_mode="HTML"
+                                parse_mode="HTML",
+                                disable_web_page_preview=True
                             )
                             logger.info(f"✅ Loser notification sent to {loser_data['user_id']}")
                         else:
@@ -1230,13 +1273,23 @@ class LudoManagerBot:
                         
                         # Notify user
                         try:
+                            # Generate link to the original game table message
+                            table_link = self._generate_message_link(
+                                game['chat_id'], 
+                                int(game['admin_message_id'])
+                            )
+                            
                             await context.bot.send_message(
                                 chat_id=user_data['user_id'],
                                 text=(
-                                    f"⌛ Your game exceeded the 1-hour limit and has been automatically cancelled.\n"
-                                    f"₹{refund_amount} has been refunded to your account.\n"
-                                    f"New balance: ₹{new_balance}"
-                                )
+                                    f"⌛ <b>Game Expired & Refunded</b>\n\n"
+                                    f"Your game exceeded the 1-hour limit and has been automatically cancelled.\n\n"
+                                    f"<b>Refund Amount:</b> ₹{refund_amount}\n"
+                                    f"<b>New Balance:</b> ₹{new_balance}\n\n"
+                                    f"📋 <a href='{table_link}'>View Game Table</a>"
+                                ),
+                                parse_mode="HTML",
+                                disable_web_page_preview=True
                             )
                         except Exception as e:
                             logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
