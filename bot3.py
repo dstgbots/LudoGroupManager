@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pyrogram
 from pyrogram import Client, filters as pyrogram_filters
-from pyrogram.types import Message, MessageEntity
+from pyrogram.types import Message, MessageEntity, MessageEntityMention, MessageEntityMentionName
 
 # Try to import Pyrogram enums, fallback to string constants if not available
 try:
@@ -216,7 +216,7 @@ class LudoManagerBot:
             return None
         
     def _extract_mentions_from_message(self, message_text: str, message_entities: List = None) -> List[str]:
-        """Extract user mentions from message using Telegram entities (more reliable than regex)"""
+        """Extract user mentions from message using proper Pyrogram entity detection"""
         mentions = []
         
         try:
@@ -229,16 +229,17 @@ class LudoManagerBot:
             for entity in message_entities:
                 logger.debug(f"🔍 Entity: {entity} | Type: {getattr(entity, 'type', 'unknown')}")
                 
-                # Handle @username mentions (MessageEntity.MENTION)
-                if hasattr(entity, 'type') and (entity.type == 'mention' or (PYROGRAM_ENUMS_AVAILABLE and entity.type == MessageEntityType.MENTION)):
+                # Handle @username mentions (MessageEntityMention)
+                if isinstance(entity, pyrogram.types.MessageEntityMention):
                     mention_text = message_text[entity.offset:entity.offset + entity.length]
                     mentions.append(mention_text)
                     logger.debug(f"Found @mention: {mention_text}")
                 
-                # Handle direct user mentions (when someone taps on a contact) (MessageEntity.TEXT_MENTION)
-                elif hasattr(entity, 'type') and (entity.type == 'text_mention' or (PYROGRAM_ENUMS_AVAILABLE and entity.type == MessageEntityType.TEXT_MENTION)):
-                    if hasattr(entity, 'user') and entity.user:
-                        user = entity.user
+                # Handle direct user mentions by tapping contact (MessageEntityMentionName)
+                elif isinstance(entity, pyrogram.types.MessageEntityMentionName):
+                    # ent.user carries the User object
+                    user = getattr(entity, 'user', None)
+                    if user:
                         # Create user entry if not exists
                         user_data = {
                             'user_id': user.id,
@@ -263,12 +264,23 @@ class LudoManagerBot:
                         # Add the mention text (usually first name)
                         mention_text = message_text[entity.offset:entity.offset + entity.length]
                         mentions.append(mention_text)
-                        logger.info(f"✅ Created/updated user from text_mention: {user.first_name}")
+                        logger.info(f"✅ Created/updated user from MessageEntityMentionName: {user.first_name} (ID: {user.id})")
                         logger.debug(f"Found text_mention: {mention_text}")
                 
-                # Debug: log all entity types we encounter
+                # Fallback for older Pyrogram versions or different entity types
                 else:
                     logger.debug(f"🔍 Unhandled entity type: {getattr(entity, 'type', 'unknown')}")
+                    # Try to handle as string-based entity types
+                    if hasattr(entity, 'type'):
+                        if entity.type == 'mention':
+                            mention_text = message_text[entity.offset:entity.offset + entity.length]
+                            mentions.append(mention_text)
+                            logger.debug(f"Found @mention (string type): {mention_text}")
+                        elif entity.type == 'text_mention' and hasattr(entity, 'user'):
+                            user = entity.user
+                            mention_text = message_text[entity.offset:entity.offset + entity.length]
+                            mentions.append(mention_text)
+                            logger.debug(f"Found text_mention (string type): {mention_text}")
             
             if not mentions:
                 logger.debug("No entities found, falling back to regex parsing")
@@ -506,26 +518,52 @@ class LudoManagerBot:
             logger.info(f"📄 Processing game table message...")
             logger.info(f"📝 Message content: {message_text}")
             
-            # First, extract all mentioned users from message entities (CRITICAL FIX)
+            # First, extract all mentioned users from message entities using proper Pyrogram detection
             mentioned_users = []
             if message_entities:
                 for entity in message_entities:
-                    if hasattr(entity, 'type') and entity.type == "text_mention" and hasattr(entity, 'user') and entity.user:
-                        # User mentioned by first name (no username)
-                        mentioned_users.append({
-                            "user_id": entity.user.id,
-                            "username": entity.user.username or f"user_{entity.user.id}",
-                            "first_name": entity.user.first_name,
-                            "is_mention": True
-                        })
-                    elif hasattr(entity, 'type') and entity.type == "mention":
-                        # User mentioned with username (@username)
+                    # Handle @username mentions (MessageEntityMention)
+                    if isinstance(entity, MessageEntityMention):
                         mention_text = message_text[entity.offset:entity.offset + entity.length]
                         username = mention_text.lstrip('@')
                         mentioned_users.append({
                             "username": username,
                             "is_mention": True
                         })
+                        logger.debug(f"Found @mention entity: {username}")
+                    
+                    # Handle direct user mentions by tapping contact (MessageEntityMentionName)
+                    elif isinstance(entity, MessageEntityMentionName):
+                        user = getattr(entity, 'user', None)
+                        if user:
+                            mentioned_users.append({
+                                "user_id": user.id,
+                                "username": user.username or f"user_{user.id}",
+                                "first_name": user.first_name,
+                                "is_mention": True
+                            })
+                            logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id})")
+                    
+                    # Fallback for string-based entity types
+                    elif hasattr(entity, 'type'):
+                        if entity.type == "text_mention" and hasattr(entity, 'user') and entity.user:
+                            # User mentioned by first name (no username)
+                            mentioned_users.append({
+                                "user_id": entity.user.id,
+                                "username": entity.user.username or f"user_{entity.user.id}",
+                                "first_name": entity.user.first_name,
+                                "is_mention": True
+                            })
+                            logger.debug(f"Found text_mention (string type): {entity.user.first_name}")
+                        elif entity.type == "mention":
+                            # User mentioned with username (@username)
+                            mention_text = message_text[entity.offset:entity.offset + entity.length]
+                            username = mention_text.lstrip('@')
+                            mentioned_users.append({
+                                "username": username,
+                                "is_mention": True
+                            })
+                            logger.debug(f"Found @mention (string type): {username}")
             
             # Also check for usernames in the message text (for cases where users aren't properly mentioned)
             lines = message_text.strip().split("\n")
@@ -620,6 +658,7 @@ class LudoManagerBot:
         # Check if message contains "Full" keyword
         if "Full" in update.message.text or "full" in update.message.text:
             logger.info("📝 Detected potential game table from admin")
+            logger.info(f"🔍 Message entities: {update.message.entities}")
             
             # Extract game data using message entities
             game_data = await self._extract_game_data_from_message(
@@ -1049,6 +1088,7 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("ping", self.ping_command))
+        application.add_handler(CommandHandler("testmentions", self.test_mentions_command))
         application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("balance", self.balance_command))
         application.add_handler(CommandHandler("addbalance", self.addbalance_command))
@@ -1182,6 +1222,48 @@ class LudoManagerBot:
             else:
                 await update.message.reply_text(error_msg)
             
+    async def test_mentions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /testmentions command - test mention detection"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        try:
+            # Check if this message has entities
+            if update.message.entities:
+                message = "🔍 **Message Entities Found:**\n\n"
+                for i, entity in enumerate(update.message.entities):
+                    message += f"**Entity {i+1}:**\n"
+                    message += f"• Type: `{getattr(entity, 'type', 'unknown')}`\n"
+                    message += f"• Offset: `{getattr(entity, 'offset', 'unknown')}`\n"
+                    message += f"• Length: `{getattr(entity, 'length', 'unknown')}`\n"
+                    
+                    # Check if it's a Pyrogram entity
+                    if hasattr(entity, '__class__'):
+                        message += f"• Class: `{entity.__class__.__name__}`\n"
+                    
+                    # Check for user info
+                    if hasattr(entity, 'user') and entity.user:
+                        message += f"• User ID: `{entity.user.id}`\n"
+                        message += f"• Username: `{entity.user.username or 'None'}`\n"
+                        message += f"• First Name: `{entity.user.first_name or 'None'}`\n"
+                    
+                    message += "\n"
+                
+                # Test mention extraction
+                mentions = self._extract_mentions_from_message(update.message.text, update.message.entities)
+                message += f"**Extracted Mentions:** {mentions}\n"
+                
+            else:
+                message = "❌ **No message entities found**\n\n"
+                message += "Try mentioning a user with @username or by tapping their contact."
+            
+            await self.send_group_response(update, context, message)
+            
+        except Exception as e:
+            logger.error(f"Error in test_mentions command: {e}")
+            await self.send_group_response(update, context, f"❌ Error testing mentions: {str(e)}")
+
     async def ping_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /ping command - simple health check"""
         user = update.effective_user
@@ -1273,10 +1355,12 @@ class LudoManagerBot:
             "• Direct contact tap (no @ needed)\n"
             "• Works even without @ symbol\n"
             "• Supports international characters\n"
-            "• Uses Telegram's native mention system\n\n"
+            "• Uses Telegram's native mention system\n"
+            "• **NEW**: Proper Pyrogram entity detection\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/ping - Check if bot is running\n"
+            "/testmentions - Test mention detection\n"
             "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
             "/addbalance @username amount - Add balance to user\n"
