@@ -1084,17 +1084,24 @@ class LudoManagerBot:
         is_group = self.is_configured_group(update.effective_chat.id)
         
         try:
-            # Get user data
+            # Get user data with case-insensitive username matching
             user_data = users_collection.find_one({'user_id': user.id})
             
             if user_data:
                 balance = user_data.get('balance', 0)
-                balance_message = f"💰 Your balance: ₹{balance}"
+                
+                # Format balance message based on whether it's positive, negative, or zero
+                if balance > 0:
+                    balance_message = f"💰 **Your Balance: ₹{balance}**"
+                elif balance < 0:
+                    balance_message = f"💸 **Your Balance: -₹{abs(balance)} (Debt)**"
+                else:
+                    balance_message = f"💰 **Your Balance: ₹{balance}**"
                 
                 if is_group:
                     await self.send_group_response(update, context, balance_message)
                 else:
-                    await update.message.reply_text(balance_message)
+                    await update.message.reply_text(balance_message, parse_mode="HTML")
             else:
                 balance_message = "❌ Account not found. Please use /start to create your account."
                 if is_group:
@@ -1104,7 +1111,11 @@ class LudoManagerBot:
                     
         except Exception as e:
             logger.error(f"❌ Error in balance command: {e}")
-            await self.send_group_response(update, context, "❌ Error retrieving balance.")
+            error_msg = "❌ Error retrieving balance. Please try again later."
+            if is_group:
+                await self.send_group_response(update, context, error_msg)
+            else:
+                await update.message.reply_text(error_msg)
 
     async def addbalance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /addbalance command"""
@@ -1200,19 +1211,25 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, "❌ Amount must be positive!")
                 return
                 
-            # Find user
-            user_data = users_collection.find_one({'username': username})
+            # Find user with case-insensitive matching
+            user_data = users_collection.find_one({
+                '$or': [
+                    {'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}},
+                    {'username': {'$regex': f'^@{re.escape(username)}$', '$options': 'i'}}
+                ]
+            })
             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
                 return
                 
-            # Update balance
+            # Get current balance and calculate new balance
             old_balance = user_data.get('balance', 0)
             new_balance = old_balance - amount
             
+            # Update user balance
             users_collection.update_one(
-                {'user_id': user_data['user_id']},
+                {'_id': user_data['_id']},
                 {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
             )
             
@@ -1229,33 +1246,66 @@ class LudoManagerBot:
             }
             transactions_collection.insert_one(transaction_data)
             
-            # Prepare response
+            # Prepare detailed response message
             display_name = user_data.get('username', user_data.get('first_name', 'Unknown User'))
-            response_msg = f"✅ Withdrew ₹{amount} from {display_name}"
-            response_msg += f"\n💰 Balance: ₹{old_balance} → ₹{new_balance}"
+            
+            if old_balance < 0:
+                # User already had negative balance
+                response_msg = (
+                    f"✅ **Withdrew ₹{amount} from {display_name}**\n\n"
+                    f"💰 **Previous Balance:** -₹{abs(old_balance)} (Debt)\n"
+                    f"💸 **Amount Withdrawn:** ₹{amount}\n"
+                    f"📊 **New Balance:** -₹{abs(new_balance)} (Debt)"
+                )
+            else:
+                response_msg = (
+                    f"✅ **Withdrew ₹{amount} from {display_name}**\n\n"
+                    f"💰 **Previous Balance:** ₹{old_balance}\n"
+                    f"💸 **Amount Withdrawn:** ₹{amount}\n"
+                    f"📊 **New Balance:** ₹{new_balance}"
+                )
             
             if new_balance < 0:
-                response_msg += "\n⚠️ User now has negative balance!"
+                response_msg += "\n\n⚠️ **User now has negative balance (debt)!**"
                 
             await self.send_group_response(update, context, response_msg)
             
             # Update balance sheet
             await self.update_balance_sheet(context)
             
-            # Notify user
+            # Notify user with detailed breakdown
             try:
-                user_balance_display = f"₹{new_balance}" if new_balance >= 0 else f"-₹{abs(new_balance)} (debt)"
+                if old_balance < 0:
+                    user_notification = (
+                        f"💸 **Withdrawal Notice**\n\n"
+                        f"₹{amount} has been withdrawn from your account by admin.\n\n"
+                        f"📊 **Breakdown:**\n"
+                        f"• Previous Balance: -₹{abs(old_balance)} (Debt)\n"
+                        f"• Amount Withdrawn: ₹{amount}\n"
+                        f"• New Balance: -₹{abs(new_balance)} (Debt)\n\n"
+                        f"⚠️ **You now have a debt of ₹{abs(new_balance)}**"
+                    )
+                else:
+                    user_notification = (
+                        f"💸 **Withdrawal Notice**\n\n"
+                        f"₹{amount} has been withdrawn from your account by admin.\n\n"
+                        f"📊 **Breakdown:**\n"
+                        f"• Previous Balance: ₹{old_balance}\n"
+                        f"• Amount Withdrawn: ₹{amount}\n"
+                        f"• New Balance: ₹{new_balance}"
+                    )
+                
+                if new_balance < 0:
+                    user_notification += f"\n\n⚠️ **You now have a debt of ₹{abs(new_balance)}**"
+                
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
-                    text=(
-                        f"💸 Withdrawal Notice\n"
-                        f"₹{amount} has been withdrawn from your account by admin.\n"
-                        f"💰 New balance: {user_balance_display}\n"
-                        f"Admin: {update.effective_user.first_name}"
-                    )
+                    text=user_notification,
+                    parse_mode="HTML"
                 )
+                logger.info(f"✅ Withdrawal notification sent to {username}")
             except Exception as e:
-                logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
+                logger.warning(f"⚠️ Could not notify user {username}: {e}")
                 
         except ValueError:
             await self.send_group_response(update, context, "❌ Invalid amount. Please enter a number.")
@@ -1791,11 +1841,16 @@ class LudoManagerBot:
             total_commission_stats = list(games_collection.aggregate(total_commission_pipeline))
             total_commission = total_commission_stats[0]['total_commission'] if total_commission_stats else 0
             
-            # Top 5 users by balance
-            top_users = list(users_collection.find(
+                        # Top 5 users by balance (positive and negative)
+            top_positive_users = list(users_collection.find(
                 {'balance': {'$gt': 0}},
                 {'username': 1, 'first_name': 1, 'balance': 1}
             ).sort('balance', -1).limit(5))
+            
+            top_negative_users = list(users_collection.find(
+                {'balance': {'$lt': 0}},
+                {'username': 1, 'first_name': 1, 'balance': 1}
+            ).sort('balance', 1).limit(5))  # Sort ascending for negative (closest to 0 first)
             
             # Recent game activity breakdown
             seven_days_ago = current_time - timedelta(days=7)
@@ -1851,16 +1906,26 @@ class LudoManagerBot:
                 "📈 **TRANSACTION ACTIVITY:**\n"
                 f"• Transactions (30 days): {recent_transactions}\n\n"
                 
-                "🏆 **TOP 5 USERS BY BALANCE:**\n"
+                                "🏆 **TOP 5 USERS BY POSITIVE BALANCE:**\n"
             )
             
-            if top_users:
-                for i, user in enumerate(top_users, 1):
+            if top_positive_users:
+                for i, user in enumerate(top_positive_users, 1):
                     name = user.get('first_name', user.get('username', 'Unknown'))
                     balance = user.get('balance', 0)
                     stats_message += f"{i}. {name}: ₹{balance}\n"
             else:
                 stats_message += "No users with positive balance\n"
+            
+            stats_message += "\n💸 **TOP 5 USERS BY NEGATIVE BALANCE (DEBT):**\n"
+            
+            if top_negative_users:
+                for i, user in enumerate(top_negative_users, 1):
+                    name = user.get('first_name', user.get('username', 'Unknown'))
+                    balance = user.get('balance', 0)
+                    stats_message += f"{i}. {name}: -₹{abs(balance)} (Debt)\n"
+            else:
+                stats_message += "No users with negative balance\n"
             
             stats_message += f"\n🕐 Generated: {current_time.strftime('%d/%m/%Y %H:%M:%S')}"
             
@@ -1946,8 +2011,13 @@ class LudoManagerBot:
                 account_name = user.get('first_name', user.get('username', 'Unknown User'))
                 balance = user.get('balance', 0)
                 
-                # Format with triangle emoji: 🔺account_name = balance
-                content += f"🔺{account_name} = {balance}\n"
+                # Format with appropriate emoji based on balance status
+                if balance > 0:
+                    content += f"💰 {account_name} = ₹{balance}\n"
+                elif balance < 0:
+                    content += f"💸 {account_name} = -₹{abs(balance)} (Debt)\n"
+                else:
+                    content += f"🔺{account_name} = ₹{balance}\n"
             
             content += "\n" + "=" * 50 + "\n"
             content += f"📊 Total Users: {len(users)}"
