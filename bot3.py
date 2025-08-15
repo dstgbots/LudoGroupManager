@@ -387,6 +387,12 @@ class LudoManagerBot:
                     logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                     logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                     
+                    # Immediately update balance sheet after bet deductions
+                    try:
+                        await self.update_balance_sheet(context)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not update balance sheet after bet deductions: {e}")
+                    
                     # Send confirmation to group - DISABLED: No group notification needed
                     # await self._send_group_confirmation(context, update.effective_chat.id)
                     
@@ -602,6 +608,13 @@ class LudoManagerBot:
                     
         except Exception as e:
             logger.error(f"❌ Error refunding failed game: {e}")
+        finally:
+            # Always attempt to refresh balance sheet after refunds
+            try:
+                if hasattr(self, 'application') and self.application:
+                    await self.update_balance_sheet(None)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not update balance sheet after failed-game refunds: {e}")
     
     async def _send_group_confirmation(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         """Send confirmation message to group with proper MarkdownV2 formatting"""
@@ -1499,6 +1512,12 @@ class LudoManagerBot:
             
             logger.info(f"✅ Expired {len(expired_games)} games")
             
+            # After processing expired games, refresh balance sheet
+            try:
+                await self.update_balance_sheet(context)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not update balance sheet after expiring games: {e}")
+            
         except Exception as e:
             logger.error(f"❌ Error expiring games: {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
@@ -1548,7 +1567,7 @@ class LudoManagerBot:
             await query.edit_message_text(f"❌ Error processing winner: {str(e)}")
 
     async def balance_sheet_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /balancesheet command to create/update balance sheet"""
+        """Handle /balancesheet command: delete old pinned, send fresh, and pin it"""
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
@@ -1556,11 +1575,46 @@ class LudoManagerBot:
         try:
             logger.info(f"📊 Balance sheet command received from admin {update.effective_user.id}")
             
-            # Create or update the balance sheet
+            # If an old pinned balance sheet exists, try to unpin and delete it first
+            if self.pinned_balance_msg_id:
+                try:
+                    # Unpin if possible (ignore failures)
+                    try:
+                        await context.bot.unpin_chat_message(
+                            chat_id=int(self.group_id),
+                            message_id=self.pinned_balance_msg_id
+                        )
+                    except Exception as unpin_err:
+                        logger.warning(f"⚠️ Could not unpin old balance sheet: {unpin_err}")
+                    
+                    # Delete the old message (ignore failures)
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=int(self.group_id),
+                            message_id=self.pinned_balance_msg_id
+                        )
+                        logger.info("🗑️ Deleted old pinned balance sheet message")
+                    except Exception as del_err:
+                        logger.warning(f"⚠️ Could not delete old balance sheet: {del_err}")
+                    
+                    # Clear stored ID in memory and DB
+                    self.pinned_balance_msg_id = None
+                    try:
+                        balance_sheet_collection.update_one(
+                            {'type': 'pinned_balance_sheet'},
+                            {'$set': {'message_id': None, 'updated_at': datetime.now()}},
+                            upsert=True
+                        )
+                    except Exception as db_err:
+                        logger.warning(f"⚠️ Could not clear pinned balance id in DB: {db_err}")
+                except Exception as cleanup_err:
+                    logger.warning(f"⚠️ Cleanup error before recreating balance sheet: {cleanup_err}")
+            
+            # Create and pin a fresh balance sheet
             await self.create_new_balance_sheet(context)
             
             # Send confirmation message
-            await self.send_group_response(update, context, "✅ Balance sheet updated and pinned successfully!")
+            await self.send_group_response(update, context, "✅ Balance sheet refreshed and pinned successfully!")
             
         except Exception as e:
             logger.error(f"❌ Error in balance sheet command: {e}")
@@ -2091,6 +2145,15 @@ class LudoManagerBot:
             
             # Pin the message
             try:
+                # First, attempt to unpin all just in case multiple pins exist
+                try:
+                    if context:
+                        await context.bot.unpin_all_chat_messages(chat_id=int(self.group_id))
+                    elif self.application:
+                        await self.application.bot.unpin_all_chat_messages(chat_id=int(self.group_id))
+                except Exception as unpin_all_err:
+                    logger.warning(f"⚠️ Could not unpin all messages (may not be necessary): {unpin_all_err}")
+                
                 if context:
                     await context.bot.pin_chat_message(
                         chat_id=int(self.group_id),
