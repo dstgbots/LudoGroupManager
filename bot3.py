@@ -110,81 +110,74 @@ class LudoManagerBot:
             logger.error(f"❌ Error generating message link: {e}")
             return f"Message ID: {message_id }"
 
-    async def _resolve_user_mention(self, mention: str, context: ContextTypes.DEFAULT_TYPE = None) -> Optional[Dict]:
-        """Resolve user mention to user data, supporting both username and first name mentions"""
+    async def _resolve_user_mention(self, identifier: str, update: Update) -> Optional[Dict]:
+        """Resolve user from mention, user ID, or username with comprehensive matching"""
         try:
-            # Remove @ if present
-            clean_mention = mention.replace('@', '')
+            logger.info(f"🔍 Resolving user identifier: {identifier}")
             
-            # First try to find by username (exact match)
-            user_data = users_collection.find_one({'username': clean_mention})
-            if user_data:
-                logger.info(f"✅ Found user by username: {clean_mention}")
+            # First, check if it's a numeric user ID
+            if identifier.isdigit():
+                user_id = int(identifier)
+                user_data = users_collection.find_one({'user_id': user_id})
+                if user_
+                    logger.info(f"✅ Found user by ID: {user_id}")
+                    return user_data
+            
+            # Try direct username match
+            user_data = users_collection.find_one({'username': identifier})
+            if user_
+                logger.info(f"✅ Found user by direct username match: {identifier}")
                 return user_data
             
-            # Try to find by username with @ prefix
-            user_data = users_collection.find_one({'username': f"@{clean_mention}"})
-            if user_data:
-                logger.info(f"✅ Found user by username with @: @{clean_mention}")
+            # Try case-insensitive username match
+            user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(identifier)}$', '$options': 'i'}})
+            if user_
+                logger.info(f"✅ Found user by case-insensitive match: {identifier} -> {user_data['username']}")
                 return user_data
             
-            # Try to find by first name (case-insensitive)
-            user_data = users_collection.find_one({
-                'first_name': {'$regex': f'^{re.escape(clean_mention)}$', '$options': 'i'}
-            })
-            if user_data:
-                logger.info(f"✅ Found user by first name: {clean_mention}")
+            # Try first name match (case-insensitive)
+            user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(identifier)}$', '$options': 'i'}})
+            if user_
+                logger.info(f"✅ Found user by first name match: {identifier} -> {user_data['first_name']}")
                 return user_data
             
-            # Try to find by first name containing the mention (partial match)
-            user_data = users_collection.find_one({
-                'first_name': {'$regex': re.escape(clean_mention), '$options': 'i'}
-            })
-            if user_data:
-                logger.info(f"✅ Found user by first name partial match: {clean_mention}")
-                return user_data
-            
-            # If we have context, try to get user info from Telegram
-            if context and hasattr(context, 'bot'):
-                try:
-                    # Try to get chat member info (this works for users in the group)
-                    chat_members = await context.bot.get_chat_administrators(int(self.group_id))
-                    for member in chat_members:
-                        if (member.user.username and member.user.username.lower() == clean_mention.lower()) or \
-                           (member.user.first_name and member.user.first_name.lower() == clean_mention.lower()):
-                            # Create user entry if not exists
+            # If still not found, check if it's a mention in the current message
+            if update.message and update.message.entities:
+                for entity in update.message.entities:
+                    if entity.type == "text_mention" and entity.user:
+                        # Check if this is the user we're looking for
+                        if str(entity.user.id) == identifier or \
+                           (entity.user.username and entity.user.username.lower() == identifier.lower()) or \
+                           (entity.user.first_name and entity.user.first_name.lower() == identifier.lower()):
+                            # Create or update user in database
                             user_data = {
-                                'user_id': member.user.id,
-                                'username': member.user.username or member.user.first_name,
-                                'first_name': member.user.first_name,
-                                'last_name': member.user.last_name,
-                                'is_admin': member.user.id in self.admin_ids,
+                                'user_id': entity.user.id,
+                                'username': entity.user.username,
+                                'first_name': entity.user.first_name,
+                                'last_name': entity.user.last_name,
+                                'is_admin': entity.user.id in self.admin_ids,
+                                'created_at': datetime.now(),
                                 'last_active': datetime.now(),
                                 'balance': 0
                             }
                             
-                            # Insert or update user
+                            # Update or insert user
                             users_collection.update_one(
-                                {'user_id': member.user.id},
-                                {
-                                    '$set': user_data,
-                                    '$setOnInsert': {'created_at': datetime.now()}
-                                },
+                                {'user_id': entity.user.id},
+                                {'$set': user_data, '$setOnInsert': {'created_at': datetime.now()}},
                                 upsert=True
                             )
                             
-                            logger.info(f"✅ Created/updated user from group member: {member.user.first_name}")
+                            logger.info(f"✅ Created/updated user from mention: {user_data}")
                             return user_data
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not get group member info: {e}")
             
-            logger.warning(f"❌ User not found: {mention}")
+            logger.warning(f"❌ Could not resolve user identifier: {identifier}")
             return None
-            
         except Exception as e:
-            logger.error(f"❌ Error resolving user mention {mention}: {e}")
+            logger.error(f"❌ Error resolving user mention: {e}")
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None
-
+        
     def _extract_mentions_from_message(self, message_text: str, message_entities: List = None) -> List[str]:
         """Extract user mentions from message using Telegram entities (more reliable than regex)"""
         mentions = []
