@@ -494,8 +494,22 @@ class LudoManagerBot:
                         logger.info(f"✅ Found matching game for edited message")
                         game_data = self.active_games.pop(msg_id_str)
                         
-                        # Format winner as a single player for compatibility
-                        winners = [{'username': winner, 'bet_amount': game_data['bet_amount']}]
+                                    # Find the actual winner player from the game data
+                        winner_player = None
+                        for player in game_data['players']:
+                            # Check if this player matches the winner (by username or user_id)
+                            if (player['username'] == winner or 
+                                (player.get('user_id') and str(player['user_id']) == winner) or
+                                (player.get('first_name') and player['first_name'].lower() == winner.lower())):
+                                winner_player = player
+                                break
+                        
+                        if winner_player:
+                            logger.info(f"✅ Found winner player: {winner_player}")
+                            winners = [{'username': winner_player['username'], 'bet_amount': winner_player['bet_amount'], 'user_id': winner_player.get('user_id')}]
+                        else:
+                            logger.warning(f"⚠️ Winner '{winner}' not found in game players, using fallback")
+                            winners = [{'username': winner, 'bet_amount': game_data['bet_amount']}]
                         
                         # Process the game result
                         await self.process_game_result_from_winner(game_data, winners, message)
@@ -667,18 +681,31 @@ class LudoManagerBot:
                 elif user.get('entity_type') == 'mention':
                     logger.info(f"   @ Username: {user.get('username', 'Unknown')}")
             
-            # Verify users exist in our database
+            # Verify users exist in our database and prevent duplicates
             valid_players = []
+            seen_user_ids = set()
+            seen_usernames = set()
+            
             for identifier in all_user_identifiers:
                 # First try to resolve the user
                 user_data = await self._resolve_user_mention(identifier, None)
                 if user_data:
+                    user_id = user_data['user_id']
+                    username = user_data['username']
+                    
+                    # Check if we already have this user (by user_id or username)
+                    if user_id in seen_user_ids or username in seen_usernames:
+                        logger.warning(f"⚠️ Duplicate user detected: {username} (ID: {user_id}) - skipping")
+                        continue
+                    
                     valid_players.append({
-                        'username': user_data['username'],
-                        'user_id': user_data['user_id'],
+                        'username': username,
+                        'user_id': user_id,
                         'first_name': user_data.get('first_name', '')
                     })
-                    logger.info(f"✅ Valid player: {user_data['username']} (ID: {user_data['user_id']})")
+                    seen_user_ids.add(user_id)
+                    seen_usernames.add(username)
+                    logger.info(f"✅ Valid player: {username} (ID: {user_id})")
             
             if not valid_players or not amount:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
