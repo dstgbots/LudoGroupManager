@@ -579,49 +579,32 @@ class LudoManagerBot:
         if "Full" in update.message.text or "full" in update.message.text:
             logger.info("📝 Detected potential game table from admin")
             
-            # Extract game data
+            # Extract game data - PASS THE UPDATE OBJECT (CRITICAL)
             game_data = self._extract_game_data_from_message(
                 update.message.text,
                 update.effective_user.id,
                 update.message.message_id,
                 update.effective_chat.id,
-                update.message.entities  # Pass message entities for proper mention detection
+                update  # This is the key change - passing the update object
             )
             
-            if game_data:
-                # Deduct bet amounts from all players' balances BEFORE storing the game
-                success = await self._deduct_player_bets(game_data, context)
+            if game_
+                # Store game with STRING ID for consistency (CRITICAL FIX)
+                self.active_games[str(update.message.message_id)] = game_data
                 
-                if success:
-                    # Store game with STRING ID for consistency (CRITICAL FIX)
-                    self.active_games[str(update.message.message_id)] = game_data
-                    
-                    # Also store in database
-                    games_collection.insert_one(game_data)
-                    
-                    logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
-                    logger.info(f"🔍 Current active games count: {len(self.active_games)}")
-                    
-                    # Immediately update balance sheet after bet deductions
-                    try:
-                        await self.update_balance_sheet(context)
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not update balance sheet after bet deductions: {e}")
-                    
-                    # Send confirmation to group - DISABLED: No group notification needed
-                    # await self._send_group_confirmation(context, update.effective_chat.id)
-                    
-                    # Send winner selection message to admin's DM
-                    await self._send_winner_selection_to_admin(
-                        game_data, 
-                        update.effective_user.id
-                    )
-                else:
-                    logger.error("❌ Failed to deduct bet amounts - game not created")
+                logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
+                logger.info(f"🔍 Current active games count: {len(self.active_games)}")
+                
+                # Send confirmation to group - FIXED: Properly escaped for MarkdownV2
+                await self._send_group_confirmation(context, update.effective_chat.id)
+                
+                # Send winner selection message to admin's DM
+                await self._send_winner_selection_to_admin(
+                    game_data, 
+                    update.effective_user.id
+                )
             else:
                 logger.warning("❌ Failed to extract game data from message")
-                # Send rejection message to group with auto-deletion
-                await self._send_table_rejection_message(context, update.effective_chat.id, update.message.text)
     
     async def _send_table_rejection_message(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_text: str):
         """Send rejection message to group with auto-deletion after 5 seconds"""
