@@ -356,7 +356,7 @@ class LudoManagerBot:
             else:
                 logger.warning("❌ Failed to extract game data from message")
 
-    async def _send_group_confirmation(self, chat_id: int):
+    async def _send_group_confirmation(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         """Send confirmation message to group"""
         try:
             confirmation_msg = (
@@ -371,7 +371,7 @@ class LudoManagerBot:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=confirmation_msg,
-                parse_mode="markdown"
+                parse_mode="MarkdownV2"  # Note the capitalization and V2
             )
         except Exception as e:
             logger.error(f"❌ Error sending group confirmation: {e}")
