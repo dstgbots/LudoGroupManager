@@ -834,6 +834,7 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("setcommission", self.set_commission_command))
         application.add_handler(CommandHandler("balancesheet", self.balance_sheet_command))
         application.add_handler(CommandHandler("stats", self.stats_command))
+        application.add_handler(CommandHandler("cancel", self.cancel_table_command))
         
         # Message handlers
         application.add_handler(MessageHandler(
@@ -998,10 +999,11 @@ class LudoManagerBot:
             "/activegames - Show all currently running games\n"
             "/addbalance @username amount - Add balance to user\n"
             "/withdraw @username amount - Withdraw from user\n"
-            "/setcommission @username percentage - Set custom commission rate (e.g., 10 for 10%)\n"
-            "/expiregames - Manually expire old games\n"
-            "/balancesheet - Create/update pinned balance sheet\n"
-            "/stats - Show game and user statistics"
+                         "/setcommission @username percentage - Set custom commission rate (e.g., 10 for 10%)\n"
+             "/expiregames - Manually expire old games\n"
+             "/balancesheet - Create/update pinned balance sheet\n"
+             "/stats - Show game and user statistics\n"
+             "/cancel - Cancel a game table (reply to table message)"
         )
         
         if is_group:
@@ -1466,16 +1468,171 @@ class LudoManagerBot:
             logger.error(f"❌ Error in stats command: {e}")
             await self.send_group_response(update, context, f"❌ Error generating statistics: {str(e)}")
 
+    async def cancel_table_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /cancel command to cancel a game table by replying to it"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        # Check if this is a reply to a message
+        if not update.message.reply_to_message:
+            await self.send_group_response(update, context, "❌ Please reply to a game table message with /cancel to cancel it.")
+            return
+        
+        try:
+            # Get the replied message ID
+            replied_message_id = str(update.message.reply_to_message.message_id)
+            logger.info(f"🔄 Cancel command received for message ID: {replied_message_id}")
+            
+            # Check if this message ID corresponds to an active game
+            if replied_message_id not in self.active_games:
+                await self.send_group_response(update, context, "❌ No active game found for this message. The game might have already been completed or expired.")
+                return
+            
+            # Get the game data
+            game_data = self.active_games[replied_message_id]
+            logger.info(f"🎮 Cancelling game: {game_data['game_id']}")
+            
+            # Cancel the game and refund all players
+            success = await self._cancel_and_refund_game(game_data, update.effective_user.id)
+            
+            if success:
+                # Remove from active games
+                del self.active_games[replied_message_id]
+                
+                # Update game status in database
+                games_collection.update_one(
+                    {'game_id': game_data['game_id']},
+                    {
+                        '$set': {
+                            'status': 'cancelled',
+                            'cancelled_at': datetime.now(),
+                            'cancelled_by': update.effective_user.id
+                        }
+                    }
+                )
+                
+                # Update balance sheet
+                await self.update_balance_sheet(context)
+                
+                await self.send_group_response(update, context, f"✅ Game {game_data['game_id']} has been cancelled and all players refunded.")
+                logger.info(f"✅ Game {game_data['game_id']} cancelled successfully")
+            else:
+                await self.send_group_response(update, context, "❌ Failed to cancel the game. Please try again.")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in cancel table command: {e}")
+            await self.send_group_response(update, context, f"❌ Error cancelling game: {str(e)}")
+
+    async def _cancel_and_refund_game(self, game_data: Dict, admin_id: int) -> bool:
+        """Cancel a game and refund all players' bet amounts"""
+        try:
+            logger.info(f"🔄 Cancelling game {game_data['game_id']} and refunding players")
+            
+            successful_refunds = []
+            failed_players = []
+            
+            for player in game_data['players']:
+                username = player['username']
+                bet_amount = player['bet_amount']
+                
+                try:
+                    # Find user with case-insensitive matching
+                    user_data = users_collection.find_one({
+                        '$or': [
+                            {'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}},
+                            {'username': {'$regex': f'^@{re.escape(username)}$', '$options': 'i'}}
+                        ]
+                    })
+                    
+                    if not user_data:
+                        logger.error(f"❌ Player {username} not found in database")
+                        failed_players.append(username)
+                        continue
+                    
+                    # Refund the bet amount
+                    old_balance = user_data.get('balance', 0)
+                    new_balance = old_balance + bet_amount
+                    
+                    # Update user balance
+                    users_collection.update_one(
+                        {'_id': user_data['_id']},
+                        {
+                            '$set': {
+                                'balance': new_balance,
+                                'last_updated': datetime.now()
+                            }
+                        }
+                    )
+                    
+                    # Record refund transaction
+                    transaction_data = {
+                        'user_id': user_data['user_id'],
+                        'type': 'refund',
+                        'amount': bet_amount,
+                        'description': f'Refund for cancelled game {game_data["game_id"]}',
+                        'timestamp': datetime.now(),
+                        'game_id': game_data['game_id'],
+                        'admin_id': admin_id,
+                        'old_balance': old_balance,
+                        'new_balance': new_balance
+                    }
+                    transactions_collection.insert_one(transaction_data)
+                    
+                    logger.info(f"✅ Refunded ₹{bet_amount} to {username} (₹{old_balance} → ₹{new_balance})")
+                    successful_refunds.append(username)
+                    
+                    # Notify player about game cancellation and refund
+                    try:
+                        # Generate link to the original game table message
+                        table_link = self._generate_message_link(
+                            game_data['chat_id'], 
+                            int(game_data['admin_message_id'])
+                        )
+                        
+                        await self.application.bot.send_message(
+                            chat_id=user_data['user_id'],
+                            text=(
+                                f"🚫 <b>Game Cancelled & Refunded</b>\n\n"
+                                f"Your game has been cancelled by an admin.\n\n"
+                                f"<b>Game:</b> {game_data['game_id']}\n"
+                                f"<b>Refund Amount:</b> ₹{bet_amount}\n"
+                                f"<b>New Balance:</b> ₹{new_balance}\n\n"
+                                f"📋 <a href='{table_link}'>View Game Table</a>"
+                            ),
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
+                        )
+                        logger.info(f"✅ Cancellation notification sent to {username}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not notify {username} about cancellation: {e}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error refunding {username}: {e}")
+                    failed_players.append(username)
+            
+            if failed_players:
+                logger.error(f"❌ Failed to refund players: {failed_players}")
+                return False
+            
+            logger.info(f"✅ Successfully refunded all {len(successful_refunds)} players")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in _cancel_and_refund_game: {e}")
+            return False
+
     async def _generate_comprehensive_stats(self) -> str:
         """Generate comprehensive statistics including games, users, and transactions"""
         try:
             current_time = datetime.now()
             
-            # Game Statistics
+                        # Game Statistics
             total_games = games_collection.count_documents({})
             active_games_count = games_collection.count_documents({'status': 'active'})
             completed_games = games_collection.count_documents({'status': 'completed'})
             expired_games = games_collection.count_documents({'status': 'expired'})
+            cancelled_games = games_collection.count_documents({'status': 'cancelled'})
             
             # User Statistics
             total_users = users_collection.count_documents({})
@@ -1598,11 +1755,12 @@ class LudoManagerBot:
             stats_message = (
                 "📊 **LUDO BOT STATISTICS**\n\n"
                 
-                "🎮 **GAME STATISTICS:**\n"
+                                "🎮 **GAME STATISTICS:**\n"
                 f"• Total Games: {total_games}\n"
                 f"• Active Games: {active_games_count}\n"
                 f"• Completed Games: {completed_games}\n"
-                f"• Expired Games: {expired_games}\n\n"
+                f"• Expired Games: {expired_games}\n"
+                f"• Cancelled Games: {cancelled_games}\n\n"
                 
                 "📅 **GAME ACTIVITY:**\n"
                 f"• Today: {today_games} games\n"
