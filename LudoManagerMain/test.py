@@ -128,11 +128,29 @@ def start_with_bot_manager(bot_manager_instance=None):
     print("Bot is running...")
     
     try:
-        print("🔄 Calling app.run()...")
-        app.run()
-        print("⚠️ app.run() returned - this shouldn't happen unless there was an error")
+        print("🔄 Setting up event loop for Pyrogram...")
+        
+        # Create a new event loop for this thread
+        import asyncio
+        
+        # Check if we're in the main thread
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            print("🧵 Running in main thread - using app.run()")
+            app.run()
+        else:
+            print("🧵 Running in background thread - creating new event loop")
+            # Create and set a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Now run the Pyrogram app
+            app.run()
+        
+        print("⚠️ Pyrogram app.run() returned - this shouldn't happen unless there was an error")
+        
     except Exception as e:
-        print(f"❌ Error in app.run(): {e}")
+        print(f"❌ Error in Pyrogram startup: {e}")
         import traceback
         print(f"❌ Full traceback: {traceback.format_exc()}")
         raise
