@@ -1379,7 +1379,7 @@ class LudoManagerBot:
             await query.edit_message_text(f"❌ Error processing winner: {str(e)}")
 
     async def send_group_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-        """Send response in group with auto-deletion of both command and response"""
+        """Send response in group with auto-deletion of both command and response after 5 seconds"""
         if self.is_configured_group(update.effective_chat.id):
             # In group - send with auto-deletion and delete user command too
             message = await context.bot.send_message(
@@ -1399,10 +1399,10 @@ class LudoManagerBot:
                 except Exception as e:
                     logger.warning(f"Could not delete user command: {e}")
             
-            # Delete the bot's response after 15 seconds
+            # Delete the bot's response after 5 seconds (same as user command)
             async def delete_bot_response():
                 try:
-                    await asyncio.sleep(15)
+                    await asyncio.sleep(5)
                     await context.bot.delete_message(
                         chat_id=update.effective_chat.id,
                         message_id=message.message_id
