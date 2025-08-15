@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pyrogram
 from pyrogram import Client, filters as pyrogram_filters
-from pyrogram.types import Message, MessageEntity, MessageEntityMention, MessageEntityMentionName
+from pyrogram.types import Message, MessageEntity
 
 # Try to import Pyrogram enums, fallback to string constants if not available
 try:
@@ -216,7 +216,7 @@ class LudoManagerBot:
             return None
         
     def _extract_mentions_from_message(self, message_text: str, message_entities: List = None) -> List[str]:
-        """Extract user mentions from message using proper Pyrogram entity detection"""
+        """Extract user mentions from message using Telegram entity types (string-based)"""
         mentions = []
         
         try:
@@ -229,14 +229,14 @@ class LudoManagerBot:
             for entity in message_entities:
                 logger.debug(f"🔍 Entity: {entity} | Type: {getattr(entity, 'type', 'unknown')}")
                 
-                # Handle @username mentions (MessageEntityMention)
-                if isinstance(entity, pyrogram.types.MessageEntityMention):
+                # Handle @username mentions (entity.type == "mention")
+                if hasattr(entity, 'type') and entity.type == "mention":
                     mention_text = message_text[entity.offset:entity.offset + entity.length]
                     mentions.append(mention_text)
                     logger.debug(f"Found @mention: {mention_text}")
                 
-                # Handle direct user mentions by tapping contact (MessageEntityMentionName)
-                elif isinstance(entity, pyrogram.types.MessageEntityMentionName):
+                # Handle direct user mentions by tapping contact (entity.type == "text_mention")
+                elif hasattr(entity, 'type') and entity.type == "text_mention":
                     # ent.user carries the User object
                     user = getattr(entity, 'user', None)
                     if user:
@@ -264,23 +264,12 @@ class LudoManagerBot:
                         # Add the mention text (usually first name)
                         mention_text = message_text[entity.offset:entity.offset + entity.length]
                         mentions.append(mention_text)
-                        logger.info(f"✅ Created/updated user from MessageEntityMentionName: {user.first_name} (ID: {user.id})")
+                        logger.info(f"✅ Created/updated user from text_mention: {user.first_name} (ID: {user.id})")
                         logger.debug(f"Found text_mention: {mention_text}")
                 
-                # Fallback for older Pyrogram versions or different entity types
+                # Debug: log all entity types we encounter
                 else:
                     logger.debug(f"🔍 Unhandled entity type: {getattr(entity, 'type', 'unknown')}")
-                    # Try to handle as string-based entity types
-                    if hasattr(entity, 'type'):
-                        if entity.type == 'mention':
-                            mention_text = message_text[entity.offset:entity.offset + entity.length]
-                            mentions.append(mention_text)
-                            logger.debug(f"Found @mention (string type): {mention_text}")
-                        elif entity.type == 'text_mention' and hasattr(entity, 'user'):
-                            user = entity.user
-                            mention_text = message_text[entity.offset:entity.offset + entity.length]
-                            mentions.append(mention_text)
-                            logger.debug(f"Found text_mention (string type): {mention_text}")
             
             if not mentions:
                 logger.debug("No entities found, falling back to regex parsing")
@@ -518,12 +507,12 @@ class LudoManagerBot:
             logger.info(f"📄 Processing game table message...")
             logger.info(f"📝 Message content: {message_text}")
             
-            # First, extract all mentioned users from message entities using proper Pyrogram detection
+            # First, extract all mentioned users from message entities using Telegram entity types
             mentioned_users = []
             if message_entities:
                 for entity in message_entities:
-                    # Handle @username mentions (MessageEntityMention)
-                    if isinstance(entity, MessageEntityMention):
+                    # Handle @username mentions (entity.type == "mention")
+                    if hasattr(entity, 'type') and entity.type == "mention":
                         mention_text = message_text[entity.offset:entity.offset + entity.length]
                         username = mention_text.lstrip('@')
                         mentioned_users.append({
@@ -532,8 +521,8 @@ class LudoManagerBot:
                         })
                         logger.debug(f"Found @mention entity: {username}")
                     
-                    # Handle direct user mentions by tapping contact (MessageEntityMentionName)
-                    elif isinstance(entity, MessageEntityMentionName):
+                    # Handle direct user mentions by tapping contact (entity.type == "text_mention")
+                    elif hasattr(entity, 'type') and entity.type == "text_mention":
                         user = getattr(entity, 'user', None)
                         if user:
                             mentioned_users.append({
@@ -544,26 +533,9 @@ class LudoManagerBot:
                             })
                             logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id})")
                     
-                    # Fallback for string-based entity types
-                    elif hasattr(entity, 'type'):
-                        if entity.type == "text_mention" and hasattr(entity, 'user') and entity.user:
-                            # User mentioned by first name (no username)
-                            mentioned_users.append({
-                                "user_id": entity.user.id,
-                                "username": entity.user.username or f"user_{entity.user.id}",
-                                "first_name": entity.user.first_name,
-                                "is_mention": True
-                            })
-                            logger.debug(f"Found text_mention (string type): {entity.user.first_name}")
-                        elif entity.type == "mention":
-                            # User mentioned with username (@username)
-                            mention_text = message_text[entity.offset:entity.offset + entity.length]
-                            username = mention_text.lstrip('@')
-                            mentioned_users.append({
-                                "username": username,
-                                "is_mention": True
-                            })
-                            logger.debug(f"Found @mention (string type): {username}")
+                    # Debug: log all entity types we encounter
+                    else:
+                        logger.debug(f"🔍 Unhandled entity type: {getattr(entity, 'type', 'unknown')}")
             
             # Also check for usernames in the message text (for cases where users aren't properly mentioned)
             lines = message_text.strip().split("\n")
@@ -1356,7 +1328,7 @@ class LudoManagerBot:
             "• Works even without @ symbol\n"
             "• Supports international characters\n"
             "• Uses Telegram's native mention system\n"
-            "• **NEW**: Proper Pyrogram entity detection\n\n"
+            "• **NEW**: Telegram entity-based mention detection\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "📊 **ADMIN COMMANDS:**\n"
             "/ping - Check if bot is running\n"
