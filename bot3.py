@@ -161,7 +161,7 @@ class LudoManagerBot:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             self.pyro_client = None
             return False
-
+    
     def _setup_pyrogram_handlers(self):
         """Set up Pyrogram handlers for edited messages"""
         if not self.pyro_client:
@@ -224,7 +224,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-
+    
     def _extract_winner_from_edited_message(self, message_text: str) -> Optional[str]:
         """Extract winner username from edited message text with proper error handling"""
         try:
@@ -257,7 +257,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
-
+    
     def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int) -> Optional[Dict]:
         """Extract game data from message text using simplified line-by-line processing"""
         try:
@@ -267,7 +267,7 @@ class LudoManagerBot:
             lines = message_text.strip().split("\n")
             usernames = []
             amount = None
-
+    
             for line in lines:
                 logger.debug(f"🔍 Processing line: {line}")
                 
@@ -286,15 +286,15 @@ class LudoManagerBot:
                         if len(username) > 2 and not username.lower() in ['full', 'table', 'game']:
                             usernames.append(username)
                             logger.info(f"👥 Player found: {username}")
-
+    
             if not usernames or not amount:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
                 return None
-
+    
             if len(usernames) < 2:
                 logger.warning("❌ Need at least 2 players for a game")
                 return None
-
+    
             # Create game data with STRING ID for consistency (CRITICAL FIX)
             game_id = f"game_{int(datetime.now().timestamp())}_{message_id}"
             game_data = {
@@ -316,7 +316,7 @@ class LudoManagerBot:
             logger.error(f"❌ Error extracting game data: {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None
-
+    
     async def detect_and_process_game_table(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Automatically detect and process game tables when admins send messages with 'Full' keyword"""
         if not self.is_configured_group(update.effective_chat.id):
@@ -324,6 +324,10 @@ class LudoManagerBot:
     
         # Only admins can create game tables
         if update.effective_user.id not in self.admin_ids:
+            return
+    
+        # CRITICAL FIX: Check if this is a valid message update
+        if not update.message or not update.message.text:
             return
     
         # Check if message contains "Full" keyword
@@ -380,7 +384,7 @@ class LudoManagerBot:
             logger.error(f"❌ Error sending group confirmation: {e}")
     
     async def _send_winner_selection_to_admin(self, game_data: Dict, admin_user_id: int):
-        """Send winner selection message to admin's DM with proper Markdown formatting"""
+        """Send winner selection message to admin's DM with proper formatting"""
         if not self.pyro_client or not self.pyro_client.is_connected:
             logger.warning("⚠️ Pyrogram client not available for sending winner selection")
             return
@@ -390,38 +394,42 @@ class LudoManagerBot:
             keyboard = []
             for player in game_data['players']:
                 username = player['username']
-                # Properly escape special characters for Markdown
-                clean_username = re.sub(r'[_*[\]()~`>#+\-=|{}.!]', r'\\\g<0>', username)
+                # Create button text with proper escaping
+                button_text = f"🏆 {username}"
+                callback_data = f"winner_{game_data['game_id']}_{username}"
+                
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"🏆 {clean_username}", 
-                        callback_data=f"winner_{game_data['game_id']}_{username}"
+                        button_text, 
+                        callback_data=callback_data
                     )
                 ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Prepare message with proper Markdown formatting
-            # Note: For Pyrogram markdown, use single asterisks for bold
+            # Prepare message - use HTML to avoid parse mode issues
             players_list = ", ".join([f"@{p['username']}" for p in game_data['players']])
+            
+            # CRITICAL FIX: Use HTML instead of Markdown to avoid parse mode errors
+            html_message = (
+                f"<b>🎮 Game Table Processed!</b>\n\n"
+                f"<b>Players:</b> {players_list}\n"
+                f"<b>Amount:</b> ₹{game_data['total_amount']}\n\n"
+                f"<b>Select the winner:</b>"
+            )
             
             # Send message to admin's DM
             await self.pyro_client.send_message(
                 chat_id=admin_user_id,
-                text=(
-                    f"🎮 *Game Table Processed!*\n\n"
-                    f"*Players:* {players_list}\n"
-                    f"*Amount:* ₹{game_data['total_amount']}\n\n"
-                    f"*Select the winner:*"
-                ),
+                text=html_message,
                 reply_markup=reply_markup,
-                parse_mode="markdown"  # This is correct for Pyrogram
+                parse_mode="html"  # CRITICAL: Use "html" instead of "markdown"
             )
             logger.info(f"✅ Winner selection sent to admin {admin_user_id}")
         except Exception as e:
             logger.error(f"❌ Error sending winner selection to admin: {e}")
             logger.error(f"❌ Full error details: {str(e)}")
-
+    
     async def process_game_result_from_winner(self, game_data: Dict, winners: List[Dict], message: Optional[Message] = None):
         """Process game results when winner is determined"""
         try:
@@ -440,49 +448,54 @@ class LudoManagerBot:
             
             # Update winner's balance
             for winner in winners:
-                # Find user in database
-                user_data = users_collection.find_one({'username': winner['username']})
+                # CRITICAL FIX: Case-insensitive database lookup
+                username = winner['username']
+                
+                # Try to find user with case-insensitive matching
+                user_data = users_collection.find_one({
+                    '$or': [
+                        {'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}},
+                        {'username': {'$regex': f'^@{re.escape(username)}$', '$options': 'i'}}
+                    ]
+                })
                 
                 if not user_data:
-                    # Try to find by username without @
-                    clean_username = winner['username'].lstrip('@')
-                    user_data = users_collection.find_one({'username': clean_username})
+                    logger.warning(f"⚠️ Winner {username} not found in database")
+                    continue
+                    
+                # Update balance
+                new_balance = user_data.get('balance', 0) + winner_amount
                 
-                if user_data:
-                    # Update balance
-                    new_balance = user_data.get('balance', 0) + winner_amount
-                    
-                    users_collection.update_one(
-                        {'_id': user_data['_id']},
-                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                users_collection.update_one(
+                    {'_id': user_data['_id']},
+                    {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                )
+                
+                # Record winning transaction
+                transaction_data = {
+                    'user_id': user_data['user_id'],
+                    'type': 'win',
+                    'amount': winner_amount,
+                    'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
+                    'timestamp': datetime.now(),
+                    'game_id': game_data['game_id']
+                }
+                transactions_collection.insert_one(transaction_data)
+                
+                # Notify winner
+                try:
+                    await self.application.bot.send_message(
+                        chat_id=user_data['user_id'],
+                        text=(
+                            f"🎉 *Congratulations! You won!*\n\n"
+                            f"*Game:* {game_data['game_id']}\n"
+                            f"*Winnings:* ₹{winner_amount}\n"
+                            f"*New Balance:* ₹{new_balance}"
+                        ),
+                        parse_mode="MarkdownV2"
                     )
-                    
-                    # Record winning transaction
-                    transaction_data = {
-                        'user_id': user_data['user_id'],
-                        'type': 'win',
-                        'amount': winner_amount,
-                        'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
-                        'timestamp': datetime.now(),
-                        'game_id': game_data['game_id']
-                    }
-                    transactions_collection.insert_one(transaction_data)
-                    
-                    # Notify winner
-                    try:
-                        await context.bot.send_message(
-                            chat_id=user_data['user_id'],
-                            text=(
-                                f"🎉 **Congratulations! You won!**\n\n"
-                                f"**Game:** {game_data['game_id']}\n"
-                                f"**Winnings:** ₹{winner_amount}\n"
-                                f"**New Balance:** ₹{new_balance}"
-                            )
-                        )
-                    except Exception as e:
-                        logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
-                else:
-                    logger.warning(f"⚠️ Winner {winner['username']} not found in database")
+                except Exception as e:
+                    logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
             
             # Update game status
             games_collection.update_one(
@@ -498,19 +511,21 @@ class LudoManagerBot:
                 }
             )
             
+            # CRITICAL FIX: Use self.application.bot instead of context
             # Notify group
             try:
                 group_message = (
-                    f"🎉 **GAME COMPLETED!**\n\n"
-                    f"🏆 **Winner:** @{winners[0]['username']}\n"
-                    f"💰 **Winnings:** ₹{winner_amount}\n"
-                    f"💼 **Commission:** ₹{commission_amount}\n"
-                    f"🆔 **Game ID:** {game_data['game_id']}"
+                    f"🎉 *GAME COMPLETED!*\n\n"
+                    f"🏆 *Winner:* @{winners[0]['username']}\n"
+                    f"💰 *Winnings:* ₹{winner_amount}\n"
+                    f"💼 *Commission:* ₹{commission_amount}\n"
+                    f"🆔 *Game ID:* {game_data['game_id']}"
                 )
                 
-                await context.bot.send_message(
+                await self.application.bot.send_message(
                     chat_id=int(self.group_id),
-                    text=group_message
+                    text=group_message,
+                    parse_mode="MarkdownV2"
                 )
             except Exception as e:
                 logger.error(f"❌ Could not send completion message to group: {e}")
