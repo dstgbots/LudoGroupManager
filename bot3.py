@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pyrogram
 from pyrogram import Client, filters as pyrogram_filters
-from pyrogram.types import Message
+from pyrogram.types import Message, MessageEntityMention, MessageEntityMentionName
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -66,7 +66,7 @@ class LudoManagerBot:
         # Balance sheet management
         self.pinned_balance_msg_id = None
         self._load_pinned_message_id()
-        
+            
         # Check if Pyrogram is available
         self.pyrogram_available = True
         try:
@@ -171,6 +171,70 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error resolving user mention {mention}: {e}")
             return None
+
+    def _extract_mentions_from_message(self, message_text: str, entities: List = None) -> List[str]:
+        """Extract user mentions from message using Telegram entities (more accurate than regex)"""
+        mentions = []
+        
+        try:
+            if not entities:
+                logger.debug("No entities found in message")
+                return mentions
+            
+            for ent in entities:
+                # Explicit @username mention
+                if hasattr(ent, 'type') and ent.type == 'mention':
+                    mention_text = message_text[ent.offset : ent.offset + ent.length]
+                    mentions.append(mention_text)
+                    logger.debug(f"✅ Found @mention: {mention_text}")
+                
+                # Mention by tapping contact (no username) - MessageEntityMentionName
+                elif hasattr(ent, 'type') and ent.type == 'mention_name':
+                    # Extract the text that was mentioned
+                    mention_text = message_text[ent.offset : ent.offset + ent.length]
+                    mentions.append(mention_text)
+                    logger.debug(f"✅ Found contact mention: {mention_text}")
+                
+                # Text mention (when user has no username)
+                elif hasattr(ent, 'type') and ent.type == 'text_mention':
+                    # This contains user_id, we can use it directly
+                    if hasattr(ent, 'user') and ent.user:
+                        user_info = ent.user
+                        # Create user entry if not exists
+                        user_data = {
+                            'user_id': user_info.id,
+                            'username': user_info.username or user_info.first_name,
+                            'first_name': user_info.first_name,
+                            'last_name': user_info.last_name,
+                            'is_admin': user_info.id in self.admin_ids,
+                            'last_active': datetime.now(),
+                            'balance': 0
+                        }
+                        
+                        # Insert or update user
+                        users_collection.update_one(
+                            {'user_id': user_info.id},
+                            {
+                                '$set': user_data,
+                                '$setOnInsert': {'created_at': datetime.now()}
+                            },
+                            upsert=True
+                        )
+                        
+                        logger.info(f"✅ Created/updated user from text mention: {user_info.first_name}")
+                        mentions.append(user_info.first_name)
+                    else:
+                        # Fallback: extract text
+                        mention_text = message_text[ent.offset : ent.offset + ent.length]
+                        mentions.append(mention_text)
+                        logger.debug(f"✅ Found text mention: {mention_text}")
+            
+            logger.info(f"📝 Extracted {len(mentions)} mentions: {mentions}")
+            return mentions
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting mentions: {e}")
+            return mentions
 
     async def start_bot(self):
         """Start the main bot application"""
@@ -358,7 +422,7 @@ class LudoManagerBot:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
     
-    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int) -> Optional[Dict]:
+    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, entities: List = None) -> Optional[Dict]:
         """Extract game data from message text using simplified line-by-line processing"""
         try:
             logger.info(f"📄 Processing game table message...")
