@@ -381,8 +381,8 @@ class LudoManagerBot:
                     logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                     logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                     
-                    # Send confirmation to group - FIXED: Properly escaped for MarkdownV2
-                    await self._send_group_confirmation(context, update.effective_chat.id)
+                    # Send confirmation to group - DISABLED: No group notification needed
+                    # await self._send_group_confirmation(context, update.effective_chat.id)
                     
                     # Send winner selection message to admin's DM
                     await self._send_winner_selection_to_admin(
@@ -741,24 +741,26 @@ class LudoManagerBot:
                 }
             )
             
-            # Notify group
-            try:
-                group_message = (
-                    f"🎉 <b>GAME COMPLETED!</b>\n\n"
-                    f"🏆 <b>Winner:</b> @{winners[0]['username']}\n"
-                    f"💰 <b>Winnings:</b> ₹{winner_amount}\n"
-                    f"💼 <b>Commission:</b> ₹{commission_amount}\n"
-                    f"🆔 <b>Game ID:</b> {game_data['game_id']}"
-                )
-                
-                await self.application.bot.send_message(
-                    chat_id=int(self.group_id),
-                    text=group_message,
-                    parse_mode="HTML"
-                )
-                logger.info("✅ Game completion notification sent to group")
-            except Exception as e:
-                logger.error(f"❌ Could not send completion message to group: {e}")
+            # Notify group - DISABLED: No group notification needed
+            # try:
+            #     group_message = (
+            #         f"🎉 <b>GAME COMPLETED!</b>\n\n"
+            #         f"🏆 <b>Winner:</b> @{winners[0]['username']}\n"
+            #         f"💰 <b>Winnings:</b> ₹{winner_amount}\n"
+            #         f"💼 <b>Commission:</b> ₹{commission_amount}\n"
+            #         f"🆔 <b>Game ID:</b> {game_data['game_id']}"
+            #     )
+            #     
+            #     await self.application.bot.send_message(
+            #         chat_id=int(self.group_id),
+            #         text=group_message,
+            #         parse_mode="HTML"
+            #     )
+            #     logger.info("✅ Game completion notification sent to group")
+            # except Exception as e:
+            #     logger.error(f"❌ Could not send completion message to group: {e}")
+            
+            logger.info("ℹ️ Group notifications disabled - only DM notifications sent")
             
             # Update balance sheet after game completion
             try:
@@ -1309,17 +1311,19 @@ class LudoManagerBot:
                 if str(game['admin_message_id']) in self.active_games:
                     del self.active_games[str(game['admin_message_id'])]
                 
-                # Notify group
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(self.group_id),
-                        text=(
-                            f"⌛ Game {game['game_id']} has expired and all players refunded.\n"
-                            f"Total refunded: ₹{game['total_amount']}"
-                        )
-                    )
-                except Exception as e:
-                    logger.error(f"Could not send expiration message to group: {e}")
+                # Notify group - DISABLED: No group notification needed
+                # try:
+                #     await context.bot.send_message(
+                #         chat_id=int(self.group_id),
+                #         text=(
+                #             f"⌛ Game {game['game_id']} has expired and all players refunded.\n"
+                #             f"Total refunded: ₹{game['total_amount']}"
+                #         )
+                #     )
+                # except Exception as e:
+                #     logger.error(f"Could not send expiration message to group: {e}")
+                
+                logger.info(f"ℹ️ Game {game['game_id']} expired - players notified via DM only")
             
             logger.info(f"✅ Expired {len(expired_games)} games")
             
