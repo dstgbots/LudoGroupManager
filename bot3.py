@@ -17,10 +17,14 @@ from pyrogram.types import Message, MessageEntity
 try:
     from pyrogram.enums import MessageEntityType
     PYROGRAM_ENUMS_AVAILABLE = True
-    logger.info("✅ Pyrogram enums available")
+    print("✅ Pyrogram enums available")
 except ImportError:
     PYROGRAM_ENUMS_AVAILABLE = False
-    logger.warning("⚠️ Pyrogram enums not available, using string constants")
+    print("⚠️ Pyrogram enums not available, using string constants")
+    # Create a dummy MessageEntityType class for compatibility
+    class MessageEntityType:
+        MENTION = "mention"
+        TEXT_MENTION = "text_mention"
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -53,10 +57,10 @@ try:
     transactions_collection = db['transactions']
     balance_sheet_collection = db['balance_sheet']
     
-    logger.info("✅ Connected to MongoDB successfully")
+    print("✅ Connected to MongoDB successfully")
 except (ConnectionFailure, ImportError) as e:
-    logger.error(f"❌ MongoDB connection failed: {e}")
-    logger.warning("⚠️ Running in limited mode without database persistence")
+    print(f"❌ MongoDB connection failed: {e}")
+    print("⚠️ Running in limited mode without database persistence")
 
 class LudoManagerBot:
     def __init__(self, bot_token: str, api_id: int, api_hash: str, group_id: int, admin_ids: List[int]):
@@ -82,7 +86,7 @@ class LudoManagerBot:
             import pyrogram
         except ImportError:
             self.pyrogram_available = False
-            logger.warning("⚠️ Pyrogram not installed. Edited message handling will be limited.")
+            print("⚠️ Pyrogram not installed. Edited message handling will be limited.")
 
     def is_configured_group(self, chat_id: int) -> bool:
         """Check if the message is from the configured group"""
@@ -196,13 +200,13 @@ class LudoManagerBot:
                 logger.debug(f"🔍 Entity: {entity} | Type: {getattr(entity, 'type', 'unknown')}")
                 
                 # Handle @username mentions (MessageEntity.MENTION)
-                if hasattr(entity, 'type') and (entity.type == MessageEntityType.MENTION or entity.type == 'mention'):
+                if hasattr(entity, 'type') and (entity.type == 'mention' or (PYROGRAM_ENUMS_AVAILABLE and entity.type == MessageEntityType.MENTION)):
                     mention_text = message_text[entity.offset:entity.offset + entity.length]
                     mentions.append(mention_text)
                     logger.debug(f"Found @mention: {mention_text}")
                 
                 # Handle direct user mentions (when someone taps on a contact) (MessageEntity.TEXT_MENTION)
-                elif hasattr(entity, 'type') and (entity.type == MessageEntityType.TEXT_MENTION or entity.type == 'text_mention'):
+                elif hasattr(entity, 'type') and (entity.type == 'text_mention' or (PYROGRAM_ENUMS_AVAILABLE and entity.type == MessageEntityType.TEXT_MENTION)):
                     if hasattr(entity, 'user') and entity.user:
                         user = entity.user
                         # Create user entry if not exists
