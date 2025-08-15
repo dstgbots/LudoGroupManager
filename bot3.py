@@ -496,19 +496,63 @@ class LudoManagerBot:
                         
                                     # Find the actual winner player from the game data
                         winner_player = None
+                        logger.info(f"🔍 Looking for winner '{winner}' in game players: {game_data['players']}")
+                        
                         for player in game_data['players']:
-                            # Check if this player matches the winner (by username or user_id)
-                            if (player['username'] == winner or 
-                                (player.get('user_id') and str(player['user_id']) == winner) or
-                                (player.get('first_name') and player['first_name'].lower() == winner.lower())):
+                            player_username = player.get('username', '')
+                            player_user_id = player.get('user_id')
+                            player_first_name = player.get('first_name', '')
+                            
+                            logger.info(f"🔍 Checking player: username='{player_username}', user_id='{player_user_id}', first_name='{player_first_name}'")
+                            
+                            # Check if this player matches the winner by multiple criteria
+                            is_match = False
+                            
+                            # 1. Direct username match
+                            if player_username == winner:
+                                is_match = True
+                                logger.info(f"✅ Username match: '{player_username}' == '{winner}'")
+                            
+                            # 2. User ID match (if winner is a number)
+                            elif player_user_id and str(player_user_id) == winner:
+                                is_match = True
+                                logger.info(f"✅ User ID match: {player_user_id} == {winner}")
+                            
+                            # 3. First name match (case-insensitive)
+                            elif player_first_name and player_first_name.lower() == winner.lower():
+                                is_match = True
+                                logger.info(f"✅ First name match: '{player_first_name}' == '{winner}'")
+                            
+                            # 4. Handle text_mention users (username format: user_123456)
+                            elif player_username.startswith('user_') and player_user_id:
+                                # If winner is a name, check if it matches the first_name
+                                if player_first_name and player_first_name.lower() == winner.lower():
+                                    is_match = True
+                                    logger.info(f"✅ Text_mention first name match: '{player_first_name}' == '{winner}'")
+                            
+                            # 5. Handle @username mentions (remove @ and compare)
+                            elif winner.startswith('@'):
+                                clean_winner = winner[1:]  # Remove @
+                                if player_username == clean_winner:
+                                    is_match = True
+                                    logger.info(f"✅ @username match: '{player_username}' == '{clean_winner}'")
+                            
+                            if is_match:
                                 winner_player = player
+                                logger.info(f"🎯 Winner player found: {winner_player}")
                                 break
                         
                         if winner_player:
                             logger.info(f"✅ Found winner player: {winner_player}")
-                            winners = [{'username': winner_player['username'], 'bet_amount': winner_player['bet_amount'], 'user_id': winner_player.get('user_id')}]
+                            winners = [{
+                                'username': winner_player['username'], 
+                                'bet_amount': winner_player['bet_amount'], 
+                                'user_id': winner_player.get('user_id'),
+                                'first_name': winner_player.get('first_name', '')
+                            }]
                         else:
                             logger.warning(f"⚠️ Winner '{winner}' not found in game players, using fallback")
+                            logger.warning(f"⚠️ Available players: {[p.get('username', '') for p in game_data['players']]}")
                             winners = [{'username': winner, 'bet_amount': game_data['bet_amount']}]
                         
                         # Process the game result
@@ -528,12 +572,12 @@ class LudoManagerBot:
     def _extract_winner_from_edited_message(self, message_text: str) -> Optional[str]:
         """Extract winner username from edited message text with proper error handling"""
         try:
+            logger.info(f"🔍 Extracting winner from message: {message_text}")
+            
             # Look for username with ✅ mark using multiple patterns
             patterns = [
                 r'@([a-zA-Z0-9_]+)\s*✅',  # Username + space + checkmark
                 r'@([a-zA-Z0-9_]+)✅',     # Username + checkmark (no space)
-                r'@([a-zA-Z0-9_]+).*?✅',  # Username + anything + checkmark
-                r'✅.*?@([a-zA-Z0-9_]+)',  # Checkmark + anything + username
                 r'([a-zA-Z0-9_]+)\s*✅',   # Just username (no @) + checkmark
                 r'([a-zA-Z0-9_]+)✅',      # Just username (no @) + checkmark (no space)
                 r'([^\n]+)\s*✅',          # Any text (not containing newline) + checkmark
@@ -543,26 +587,40 @@ class LudoManagerBot:
             for pattern in patterns:
                 match = re.search(pattern, message_text)
                 if match:
-                    # If we found a match with any text (not just alphanumeric), try to extract a username
-                    username = match.group(1).strip()
-                    # Remove any non-username characters (like punctuation)
-                    username = re.sub(r'[^\w]', '', username)
-                    logger.info(f"✅ Winner extracted using pattern '{pattern}': {username}")
-                    return username
+                    # Extract the winner text
+                    winner_text = match.group(1).strip()
+                    logger.info(f"✅ Winner extracted using pattern '{pattern}': '{winner_text}'")
+                    
+                    # For text_mention users, we want to preserve the first name
+                    # Only clean up if it's clearly a username format
+                    if winner_text.startswith('@'):
+                        # Remove @ for @username mentions
+                        clean_winner = winner_text[1:]
+                        logger.info(f"✅ Cleaned @username: '{clean_winner}'")
+                        return clean_winner
+                    else:
+                        # For text_mention users, preserve the original text (first name)
+                        # Only remove extra whitespace and newlines
+                        clean_winner = re.sub(r'[\n\r\t]', '', winner_text).strip()
+                        logger.info(f"✅ Preserved text_mention name: '{clean_winner}'")
+                        return clean_winner
             
-            # Try line-by-line approach
+            # Try line-by-line approach as fallback
             lines = message_text.split('\n')
             for line in lines:
                 if '✅' in line:
                     # Extract any text before the checkmark
                     match = re.search(r'(.*)\s*✅', line)
                     if match:
-                        username = match.group(1).strip()
-                        # Remove @ if present and clean up
-                        username = username.lstrip('@')
-                        username = re.sub(r'[^\w]', '', username)
-                        logger.info(f"✅ Winner extracted from line '{line}': {username}")
-                        return username
+                        winner_text = match.group(1).strip()
+                        # Remove @ if present
+                        if winner_text.startswith('@'):
+                            winner_text = winner_text[1:]
+                        
+                        # Clean up but preserve the name
+                        clean_winner = re.sub(r'[\n\r\t]', '', winner_text).strip()
+                        logger.info(f"✅ Winner extracted from line '{line}': '{clean_winner}'")
+                        return clean_winner
             
             logger.warning("❌ Could not extract winner from message: " + message_text)
             return None
