@@ -25,6 +25,7 @@ except ImportError:
     class MessageEntityType:
         MENTION = "mention"
         TEXT_MENTION = "text_mention"
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -465,7 +466,7 @@ class LudoManagerBot:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
     
-    def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, update: Update) -> Optional[Dict]:
+    async def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, message_entities: List = None) -> Optional[Dict]:
         """Extract game data from message text using message entities for user mentions"""
         try:
             logger.info(f"📄 Processing game table message...")
@@ -473,9 +474,9 @@ class LudoManagerBot:
             
             # First, extract all mentioned users from message entities (CRITICAL FIX)
             mentioned_users = []
-            if update.message.entities:
-                for entity in update.message.entities:
-                    if entity.type == "text_mention" and entity.user:
+            if message_entities:
+                for entity in message_entities:
+                    if hasattr(entity, 'type') and entity.type == "text_mention" and hasattr(entity, 'user') and entity.user:
                         # User mentioned by first name (no username)
                         mentioned_users.append({
                             "user_id": entity.user.id,
@@ -483,9 +484,9 @@ class LudoManagerBot:
                             "first_name": entity.user.first_name,
                             "is_mention": True
                         })
-                    elif entity.type == "mention":
+                    elif hasattr(entity, 'type') and entity.type == "mention":
                         # User mentioned with username (@username)
-                        mention_text = update.message.text[entity.offset:entity.offset + entity.length]
+                        mention_text = message_text[entity.offset:entity.offset + entity.length]
                         username = mention_text.lstrip('@')
                         mentioned_users.append({
                             "username": username,
@@ -530,8 +531,8 @@ class LudoManagerBot:
             valid_players = []
             for identifier in all_user_identifiers:
                 # First try to resolve the user
-                user_data = self._resolve_user_mention(identifier, update)
-                if user_
+                user_data = await self._resolve_user_mention(identifier, None)
+                if user_data:
                     valid_players.append({
                         'username': user_data['username'],
                         'user_id': user_data['user_id'],
@@ -565,7 +566,7 @@ class LudoManagerBot:
             logger.info(f"🎮 Game data created: {game_data}")
             return game_data
         except Exception as e:
-            logger.error(f"❌ Error extracting game  {e}")
+            logger.error(f"❌ Error extracting game data: {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None
     
@@ -586,16 +587,16 @@ class LudoManagerBot:
         if "Full" in update.message.text or "full" in update.message.text:
             logger.info("📝 Detected potential game table from admin")
             
-            # Extract game data - PASS THE UPDATE OBJECT (CRITICAL)
-            game_data = self._extract_game_data_from_message(
+            # Extract game data using message entities
+            game_data = await self._extract_game_data_from_message(
                 update.message.text,
                 update.effective_user.id,
                 update.message.message_id,
                 update.effective_chat.id,
-                update  # This is the key change - passing the update object
+                update.message.entities  # Pass message entities for mention detection
             )
             
-            if game_
+            if game_data:
                 # Store game with STRING ID for consistency (CRITICAL FIX)
                 self.active_games[str(update.message.message_id)] = game_data
                 
@@ -891,7 +892,7 @@ class LudoManagerBot:
             logger.error(f"❌ Error sending winner selection to admin: {e}")
             logger.error(f"❌ Full error details: {str(e)}")
     
-    async def process_game_result_from_winner(self, game_ Dict, winners: List[Dict], message: Optional[Message] = None):
+    async def process_game_result_from_winner(self, game_data: Dict, winners: List[Dict], message: Optional[Message] = None):
         """Process game results when winner is determined"""
         try:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
@@ -916,18 +917,18 @@ class LudoManagerBot:
                 user_data = users_collection.find_one({'username': username})
                 
                 # If not found, try case-insensitive match
-                if not user_
+                if not user_data:
                     user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                 
                 # If still not found, try first name match
-                if not user_
+                if not user_data:
                     user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                 
                 # If still not found, try by user ID if it's numeric
                 if not user_data and username.isdigit():
                     user_data = users_collection.find_one({'user_id': int(username)})
                 
-                if user_
+                if user_data:
                     # Update balance
                     new_balance = user_data.get('balance', 0) + winner_amount
                     
