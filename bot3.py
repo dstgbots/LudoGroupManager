@@ -111,7 +111,7 @@ class LudoManagerBot:
             logger.error(f"❌ Error generating message link: {e}")
             return f"Message ID: {message_id }"
 
-    async def _resolve_user_mention(self, identifier: str, update: Update) -> Optional[Dict]:
+    async def _resolve_user_mention(self, identifier: str, context: ContextTypes.DEFAULT_TYPE = None) -> Optional[Dict]:
         """Resolve user from mention, user ID, or username with comprehensive matching"""
         try:
             logger.info(f"🔍 Resolving user identifier: {identifier}")
@@ -143,7 +143,41 @@ class LudoManagerBot:
                 return user_data
             
             # If still not found, check if it's a mention in the current message
-            if update.message and update.message.entities:
+            if context and hasattr(context, 'bot'):
+                try:
+                    # Try to get chat member info (this works for users in the group)
+                    chat_members = await context.bot.get_chat_administrators(int(self.group_id))
+                    for member in chat_members:
+                        if (member.user.username and member.user.username.lower() == identifier.lower()) or \
+                           (member.user.first_name and member.user.first_name.lower() == identifier.lower()):
+                            # Create user entry if not exists
+                            user_data = {
+                                'user_id': member.user.id,
+                                'username': member.user.username or member.user.first_name,
+                                'first_name': member.user.first_name,
+                                'last_name': member.user.last_name,
+                                'is_admin': member.user.id in self.admin_ids,
+                                'last_active': datetime.now(),
+                                'balance': 0
+                            }
+                            
+                            # Insert or update user
+                            users_collection.update_one(
+                                {'user_id': member.user.id},
+                                {
+                                    '$set': user_data,
+                                    '$setOnInsert': {'created_at': datetime.now()}
+                                },
+                                upsert=True
+                            )
+                            
+                            logger.info(f"✅ Created/updated user from group member: {member.user.first_name}")
+                            return user_data
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not get group member info: {e}")
+            
+            # If still not found, check if it's a mention in the current message
+            if update and update.message and update.message.entities:
                 for entity in update.message.entities:
                     if entity.type == "text_mention" and entity.user:
                         # Check if this is the user we're looking for
@@ -698,7 +732,7 @@ class LudoManagerBot:
                 
                 try:
                     # Use the new user mention resolver
-                    user_data = await self._resolve_user_mention(username, context)
+                    user_data = await self._resolve_user_mention(username, None)
                     
                     if not user_data:
                         logger.error(f"❌ Player {username} not found in database")
@@ -1246,8 +1280,14 @@ class LudoManagerBot:
             "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
             "/addbalance @username amount - Add balance to user\n"
+            "   Examples: /addbalance @Gopal 500\n"
+            "            /addbalance \"Gopal M\" 500\n"
             "/withdraw @username amount - Withdraw from user\n"
-                         "/setcommission @username percentage - Set custom commission rate (e.g., 10 for 10%)\n"
+            "   Examples: /withdraw @Gopal 500\n"
+            "            /withdraw \"Gopal M\" 500\n"
+                         "/setcommission @username percentage - Set custom commission rate\n"
+            "   Examples: /setcommission @Gopal 10\n"
+            "            /setcommission \"Gopal M\" 10\n"
              "/expiregames - Manually expire old games\n"
              "/balancesheet - Create/update pinned balance sheet\n"
              "/stats - Show game and user statistics\n"
@@ -1312,19 +1352,26 @@ class LudoManagerBot:
             return
             
         try:
-            if len(context.args) != 2:
-                await self.send_group_response(update, context, "Usage: /addbalance @username amount")
+            if len(context.args) < 2:
+                await self.send_group_response(update, context, "Usage: /addbalance @username amount OR /addbalance \"First Name\" amount")
                 return
-                
-            username = context.args[0].replace('@', '')
-            amount = int(context.args[1])
+            
+            # Handle names with spaces: /addbalance "Gopal M" 500
+            # The last argument is always the amount
+            amount = int(context.args[-1])  # Last argument is amount
+            
+            # All arguments except the last one form the username/name
+            username_parts = context.args[:-1]  # Everything except amount
+            username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
+            
+            logger.info(f"🔍 Parsed command - Username: '{username}', Amount: {amount}")
             
             if amount <= 0:
                 await self.send_group_response(update, context, "❌ Amount must be positive!")
                 return
                 
             # Find user using the new mention resolver
-            user_data = await self._resolve_user_mention(username, context)
+            user_data = await self._resolve_user_mention(username, None)
             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
@@ -1388,19 +1435,26 @@ class LudoManagerBot:
             return
             
         try:
-            if len(context.args) != 2:
-                await self.send_group_response(update, context, "Usage: /withdraw @username amount")
+            if len(context.args) < 2:
+                await self.send_group_response(update, context, "Usage: /withdraw @username amount OR /withdraw \"First Name\" amount")
                 return
-                
-            username = context.args[0].replace('@', '')
-            amount = int(context.args[1])
+            
+            # Handle names with spaces: /withdraw "Gopal M" 500
+            # The last argument is always the amount
+            amount = int(context.args[-1])  # Last argument is amount
+            
+            # All arguments except the last one form the username/name
+            username_parts = context.args[:-1]  # Everything except amount
+            username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
+            
+            logger.info(f"🔍 Parsed command - Username: '{username}', Amount: {amount}")
             
             if amount <= 0:
                 await self.send_group_response(update, context, "❌ Amount must be positive!")
                 return
                 
             # Find user using the new mention resolver
-            user_data = await self._resolve_user_mention(username, context)
+            user_data = await self._resolve_user_mention(username, None)
             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
@@ -1549,12 +1603,19 @@ class LudoManagerBot:
             return
             
         try:
-            if len(context.args) != 2:
-                await self.send_group_response(update, context, "Usage: /setcommission @username percentage (e.g., /setcommission @user 10 for 10%)")
+            if len(context.args) < 2:
+                await self.send_group_response(update, context, "Usage: /setcommission @username percentage OR /setcommission \"First Name\" percentage")
                 return
-                
-            username = context.args[0].replace('@', '')
-            commission_percentage = float(context.args[1])
+            
+            # Handle names with spaces: /setcommission "Gopal M" 10
+            # The last argument is always the percentage
+            commission_percentage = float(context.args[-1])  # Last argument is percentage
+            
+            # All arguments except the last one form the username/name
+            username_parts = context.args[:-1]  # Everything except percentage
+            username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
+            
+            logger.info(f"🔍 Parsed command - Username: '{username}', Commission: {commission_percentage}%")
             
             if commission_percentage < 0 or commission_percentage > 100:
                 await self.send_group_response(update, context, "❌ Commission rate must be between 0 and 100 (e.g., 10 for 10%, 100 for 100%)")
@@ -1564,7 +1625,7 @@ class LudoManagerBot:
             commission_rate = commission_percentage / 100
                 
             # Find user using the new mention resolver
-            user_data = await self._resolve_user_mention(username, context)
+            user_data = await self._resolve_user_mention(username, None)
             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User @{username} not found in database!")
@@ -1606,7 +1667,7 @@ class LudoManagerBot:
                 
                 # Refund all players
                 for player in game['players']:
-                    user_data = await self._resolve_user_mention(player['username'], context)
+                    user_data = await self._resolve_user_mention(player['username'], None)
                     
                     if user_data:
                         refund_amount = player['bet_amount']
