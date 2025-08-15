@@ -1962,8 +1962,12 @@ class LudoManagerBot:
             }
             transactions_collection.insert_one(transaction_data)
             
-            # Prepare response
-            response_msg = f"✅ Added ₹{amount} to @{username}\n"
+            # Prepare response (no @ for text_mention users)
+            user_identifier = username
+            if username.startswith('@'):
+                user_identifier = username[1:]  # Remove @ if present
+            
+            response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
             response_msg += f"💰 Balance: ₹{old_balance} → ₹{new_balance}"
             
             await self.send_group_response(update, context, response_msg)
@@ -2272,7 +2276,12 @@ class LudoManagerBot:
             # Format rate for display
             display_rate = f"{int(commission_percentage)}%"
             
-            await self.send_group_response(update, context, f"✅ Commission rate set to {display_rate} for @{username}")
+            # Show proper user identifier (no @ for text_mention users)
+            user_identifier = username
+            if username.startswith('@'):
+                user_identifier = username[1:]  # Remove @ if present
+            
+            await self.send_group_response(update, context, f"✅ Commission rate set to {display_rate} for {user_identifier}")
             
         except ValueError:
             await self.send_group_response(update, context, "❌ Invalid rate. Please enter a number between 0 and 100 (e.g., 10 for 10%).")
