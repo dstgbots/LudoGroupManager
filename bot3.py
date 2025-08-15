@@ -345,7 +345,7 @@ class LudoManagerBot:
                 logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                 logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                 
-                # Send confirmation to group - FIXED: Pass context as first parameter
+                # Send confirmation to group - FIXED: Properly escaped for MarkdownV2
                 await self._send_group_confirmation(context, update.effective_chat.id)
                 
                 # Send winner selection message to admin's DM
@@ -357,27 +357,30 @@ class LudoManagerBot:
                 logger.warning("❌ Failed to extract game data from message")
     
     async def _send_group_confirmation(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-        """Send confirmation message to group"""
+        """Send confirmation message to group with proper MarkdownV2 formatting"""
         try:
+            # Properly escape special characters for MarkdownV2
+            # Note: In MarkdownV2, special characters need to be escaped with a backslash
             confirmation_msg = (
-                "✅ Game table received!\n\n"
-                "🏆 *Winner Selection*\n"
+                "✅ Game table received\\!\n\n"
+                "🏆 \\*Winner Selection\\*\n"
                 "• Click the winner button in your DM\n"
                 "• Or edit this message and add ✅ after winner's username\n\n"
-                "⏳ *Game Timer*: 60 minutes\n"
-                "💰 *Total Pot*: Calculated automatically"
+                "⏳ \\*Game Timer\\*: 60 minutes\n"
+                "💰 \\*Total Pot\\*: Calculated automatically"
             )
             
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=confirmation_msg,
-                parse_mode="MarkdownV2"  # Must be MarkdownV2 for PTB v20+
+                parse_mode="MarkdownV2"  # Must be "MarkdownV2" for PTB v20+
             )
+            logger.info("✅ Group confirmation message sent successfully")
         except Exception as e:
             logger.error(f"❌ Error sending group confirmation: {e}")
     
     async def _send_winner_selection_to_admin(self, game_data: Dict, admin_user_id: int):
-        """Send winner selection message to admin's DM"""
+        """Send winner selection message to admin's DM with proper Markdown formatting"""
         if not self.pyro_client or not self.pyro_client.is_connected:
             logger.warning("⚠️ Pyrogram client not available for sending winner selection")
             return
@@ -399,6 +402,7 @@ class LudoManagerBot:
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             # Prepare message with proper Markdown formatting
+            # Note: For Pyrogram markdown, use single asterisks for bold
             players_list = ", ".join([f"@{p['username']}" for p in game_data['players']])
             
             # Send message to admin's DM
@@ -411,11 +415,12 @@ class LudoManagerBot:
                     f"*Select the winner:*"
                 ),
                 reply_markup=reply_markup,
-                parse_mode="markdown"
+                parse_mode="markdown"  # This is correct for Pyrogram
             )
             logger.info(f"✅ Winner selection sent to admin {admin_user_id}")
         except Exception as e:
             logger.error(f"❌ Error sending winner selection to admin: {e}")
+            logger.error(f"❌ Full error details: {str(e)}")
 
     async def process_game_result_from_winner(self, game_data: Dict, winners: List[Dict], message: Optional[Message] = None):
         """Process game results when winner is determined"""
