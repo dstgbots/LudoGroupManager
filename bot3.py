@@ -786,6 +786,8 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("activegames", self.active_games_command))
         application.add_handler(CommandHandler("expiregames", self.expire_games_command))
         application.add_handler(CommandHandler("setcommission", self.set_commission_command))
+        application.add_handler(CommandHandler("balancesheet", self.balance_sheet_command))
+        application.add_handler(CommandHandler("stats", self.stats_command))
         
         # Message handlers
         application.add_handler(MessageHandler(
@@ -951,7 +953,9 @@ class LudoManagerBot:
             "/addbalance @username amount - Add balance to user\n"
             "/withdraw @username amount - Withdraw from user\n"
             "/setcommission @username percentage - Set custom commission rate (e.g., 10 for 10%)\n"
-            "/expiregames - Manually expire old games"
+            "/expiregames - Manually expire old games\n"
+            "/balancesheet - Create/update pinned balance sheet\n"
+            "/stats - Show game and user statistics"
         )
         
         if is_group:
@@ -1378,6 +1382,223 @@ class LudoManagerBot:
             logger.error(f"❌ Error in winner selection: {e}")
             await query.edit_message_text(f"❌ Error processing winner: {str(e)}")
 
+    async def balance_sheet_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /balancesheet command to create/update balance sheet"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        try:
+            logger.info(f"📊 Balance sheet command received from admin {update.effective_user.id}")
+            
+            # Create or update the balance sheet
+            await self.create_new_balance_sheet(context)
+            
+            # Send confirmation message
+            await self.send_group_response(update, context, "✅ Balance sheet updated and pinned successfully!")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in balance sheet command: {e}")
+            await self.send_group_response(update, context, f"❌ Error updating balance sheet: {str(e)}")
+
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /stats command to show game and user statistics"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        try:
+            logger.info(f"📈 Stats command received from admin {update.effective_user.id}")
+            
+            # Generate comprehensive statistics
+            stats_message = await self._generate_comprehensive_stats()
+            
+            # Send stats message
+            await self.send_group_response(update, context, stats_message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error in stats command: {e}")
+            await self.send_group_response(update, context, f"❌ Error generating statistics: {str(e)}")
+
+    async def _generate_comprehensive_stats(self) -> str:
+        """Generate comprehensive statistics including games, users, and transactions"""
+        try:
+            current_time = datetime.now()
+            
+            # Game Statistics
+            total_games = games_collection.count_documents({})
+            active_games_count = games_collection.count_documents({'status': 'active'})
+            completed_games = games_collection.count_documents({'status': 'completed'})
+            expired_games = games_collection.count_documents({'status': 'expired'})
+            
+            # User Statistics
+            total_users = users_collection.count_documents({})
+            users_with_balance = users_collection.count_documents({'balance': {'$gt': 0}})
+            
+            # Calculate total balances
+            pipeline = [
+                {'$group': {
+                    '_id': None,
+                    'total_positive': {'$sum': {'$cond': [{'$gt': ['$balance', 0]}, '$balance', 0]}},
+                    'total_negative': {'$sum': {'$cond': [{'$lt': ['$balance', 0]}, '$balance', 0]}},
+                    'total_balance': {'$sum': '$balance'}
+                }}
+            ]
+            balance_stats = list(users_collection.aggregate(pipeline))
+            
+            if balance_stats:
+                total_positive = balance_stats[0]['total_positive']
+                total_negative = balance_stats[0]['total_negative']
+                total_balance = balance_stats[0]['total_balance']
+            else:
+                total_positive = total_negative = total_balance = 0
+            
+            # Transaction Statistics (last 30 days)
+            thirty_days_ago = current_time - timedelta(days=30)
+            recent_transactions = transactions_collection.count_documents({
+                'timestamp': {'$gte': thirty_days_ago}
+            })
+            
+            # Commission earned (from completed games) - Time-based breakdown
+            # Today's commission
+            today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            today_commission_pipeline = [
+                {'$match': {
+                    'status': 'completed',
+                    'completed_at': {'$gte': today_start, '$lte': today_end}
+                }},
+                {'$group': {
+                    '_id': None,
+                    'total_commission': {'$sum': '$admin_fee'}
+                }}
+            ]
+            today_commission_stats = list(games_collection.aggregate(today_commission_pipeline))
+            today_commission = today_commission_stats[0]['total_commission'] if today_commission_stats else 0
+            
+            # Yesterday's commission
+            yesterday_start = today_start - timedelta(days=1)
+            yesterday_end = today_start - timedelta(seconds=1)
+            
+            yesterday_commission_pipeline = [
+                {'$match': {
+                    'status': 'completed',
+                    'completed_at': {'$gte': yesterday_start, '$lte': yesterday_end}
+                }},
+                {'$group': {
+                    '_id': None,
+                    'total_commission': {'$sum': '$admin_fee'}
+                }}
+            ]
+            yesterday_commission_stats = list(games_collection.aggregate(yesterday_commission_pipeline))
+            yesterday_commission = yesterday_commission_stats[0]['total_commission'] if yesterday_commission_stats else 0
+            
+            # This month's commission
+            month_start = current_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            
+            month_commission_pipeline = [
+                {'$match': {
+                    'status': 'completed',
+                    'completed_at': {'$gte': month_start, '$lte': current_time}
+                }},
+                {'$group': {
+                    '_id': None,
+                    'total_commission': {'$sum': '$admin_fee'}
+                }}
+            ]
+            month_commission_stats = list(games_collection.aggregate(month_commission_pipeline))
+            month_commission = month_commission_stats[0]['total_commission'] if month_commission_stats else 0
+            
+            # Total commission (all time)
+            total_commission_pipeline = [
+                {'$match': {'status': 'completed'}},
+                {'$group': {
+                    '_id': None,
+                    'total_commission': {'$sum': '$admin_fee'}
+                }}
+            ]
+            total_commission_stats = list(games_collection.aggregate(total_commission_pipeline))
+            total_commission = total_commission_stats[0]['total_commission'] if total_commission_stats else 0
+            
+            # Top 5 users by balance
+            top_users = list(users_collection.find(
+                {'balance': {'$gt': 0}},
+                {'username': 1, 'first_name': 1, 'balance': 1}
+            ).sort('balance', -1).limit(5))
+            
+            # Recent game activity breakdown
+            seven_days_ago = current_time - timedelta(days=7)
+            recent_games = games_collection.count_documents({
+                'created_at': {'$gte': seven_days_ago}
+            })
+            
+            # Today's games
+            today_games = games_collection.count_documents({
+                'created_at': {'$gte': today_start, '$lte': today_end}
+            })
+            
+            # Yesterday's games
+            yesterday_games = games_collection.count_documents({
+                'created_at': {'$gte': yesterday_start, '$lte': yesterday_end}
+            })
+            
+            # This month's games
+            month_games = games_collection.count_documents({
+                'created_at': {'$gte': month_start, '$lte': current_time}
+            })
+            
+            # Format statistics message
+            stats_message = (
+                "📊 **LUDO BOT STATISTICS**\n\n"
+                
+                "🎮 **GAME STATISTICS:**\n"
+                f"• Total Games: {total_games}\n"
+                f"• Active Games: {active_games_count}\n"
+                f"• Completed Games: {completed_games}\n"
+                f"• Expired Games: {expired_games}\n\n"
+                
+                "📅 **GAME ACTIVITY:**\n"
+                f"• Today: {today_games} games\n"
+                f"• Yesterday: {yesterday_games} games\n"
+                f"• This Month: {month_games} games\n"
+                f"• Last 7 days: {recent_games} games\n\n"
+                
+                "👥 **USER STATISTICS:**\n"
+                f"• Total Users: {total_users}\n"
+                f"• Users with Balance: {users_with_balance}\n"
+                f"• Total Positive Balance: ₹{total_positive}\n"
+                f"• Total Negative Balance: ₹{total_negative}\n"
+                f"• Net Balance: ₹{total_balance}\n\n"
+                
+                "💰 **COMMISSION EARNINGS:**\n"
+                f"• Today: ₹{today_commission}\n"
+                f"• Yesterday: ₹{yesterday_commission}\n"
+                f"• This Month: ₹{month_commission}\n"
+                f"• Total (All Time): ₹{total_commission}\n\n"
+                
+                "📈 **TRANSACTION ACTIVITY:**\n"
+                f"• Transactions (30 days): {recent_transactions}\n\n"
+                
+                "🏆 **TOP 5 USERS BY BALANCE:**\n"
+            )
+            
+            if top_users:
+                for i, user in enumerate(top_users, 1):
+                    name = user.get('first_name', user.get('username', 'Unknown'))
+                    balance = user.get('balance', 0)
+                    stats_message += f"{i}. {name}: ₹{balance}\n"
+            else:
+                stats_message += "No users with positive balance\n"
+            
+            stats_message += f"\n🕐 Generated: {current_time.strftime('%d/%m/%Y %H:%M:%S')}"
+            
+            return stats_message
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating comprehensive stats: {e}")
+            return f"❌ Error generating statistics: {str(e)}"
+
     async def send_group_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
         """Send response in group with auto-deletion of both command and response after 5 seconds"""
         if self.is_configured_group(update.effective_chat.id):
@@ -1575,7 +1796,7 @@ class LudoManagerBot:
 async def main():
     """Main entry point"""
     # Configuration - replace with your actual values
-    BOT_TOKEN = "5664706056:AAGweTBRqnaS1oQVEWkgxXl1WL9wUO_zuiA"
+    BOT_TOKEN = "8205474950:AAG9aRfiLDC6-I0wwjf4vbNtU-zUTsPfwFI"
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
     GROUP_ID = -1002849354155
