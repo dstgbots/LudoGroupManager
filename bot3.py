@@ -1178,10 +1178,11 @@ class LudoManagerBot:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # Calculate total pot and commission
+            # Calculate winnings using single commission system
             total_pot = game_data['total_amount']
+            bet_amount = game_data['bet_amount']  # Amount per player
             
-            # Get winner's custom commission rate (default 10% if not set)
+            # Get winner's custom commission rate (default 5% if not set)
             winner_username = winners[0]['username']
             winner_user_data = users_collection.find_one({'username': winner_username})
             if not winner_user_data:
@@ -1190,14 +1191,17 @@ class LudoManagerBot:
                 if winner_user_id:
                     winner_user_data = users_collection.find_one({'user_id': winner_user_id})
             
-            # Use winner's custom commission rate or default 10%
-            commission_rate = winner_user_data.get('commission_rate', 0.1) if winner_user_data else 0.1
-            commission_amount = int(total_pot * commission_rate)
-            winner_amount = total_pot - commission_amount
+            # Use winner's custom commission rate or default 5%
+            commission_rate = winner_user_data.get('commission_rate', 0.05) if winner_user_data else 0.05
             
-            logger.info(f"💰 Total Pot: ₹{total_pot}")
-            logger.info(f"💼 Commission ({int(commission_rate * 100)}%): ₹{commission_amount}")
-            logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
+            # Single commission system: Winner gets their bet back + opponent's bet minus commission
+            winner_amount = bet_amount + int(bet_amount * (1 - commission_rate))  # Their bet + opponent's bet minus commission
+            commission_amount = int(bet_amount * commission_rate)  # Commission only on opponent's bet
+            
+            logger.info(f"💰 Bet Amount per Player: ₹{bet_amount}")
+            logger.info(f"💼 Commission Rate: {int(commission_rate * 100)}%")
+            logger.info(f"💸 Commission Amount: ₹{commission_amount}")
+            logger.info(f"🎉 Winner Amount: ₹{winner_amount} (₹{bet_amount} + ₹{bet_amount - commission_amount})")
             
             # Update winner's balance
             for winner in winners:
@@ -1236,8 +1240,9 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Winner {username} not found in database")
                 
                 if user_data:
-                    # Update balance
-                    new_balance = user_data.get('balance', 0) + winner_amount
+                    # Update balance: Winner gets their bet back + opponent's bet minus commission
+                    old_balance = user_data.get('balance', 0)
+                    new_balance = old_balance + winner_amount
                     
                     users_collection.update_one(
                         {'_id': user_data['_id']},
@@ -1249,7 +1254,7 @@ class LudoManagerBot:
                         'user_id': user_data['user_id'],
                         'type': 'win',
                         'amount': winner_amount,
-                        'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
+                        'description': f'Won game {game_data["game_id"]} (Single Commission: ₹{commission_amount})',
                         'timestamp': datetime.now(),
                         'game_id': game_data['game_id']
                     }
@@ -1266,7 +1271,8 @@ class LudoManagerBot:
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=(
-                                f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n\n"
+                                f"🎉 <b>You Won!</b>\n\n"
+                                f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n"
                                 f"📊 <b>Updated Balance: ₹{new_balance}</b>\n\n"
                                 f"💸 Click to instant Withdraw(https://telegram.me/SOMYA_000)\n\n"
                                 f"🔍 <a href='{table_link}'>View Table</a> 👈"
@@ -1379,7 +1385,7 @@ class LudoManagerBot:
                     f"🎉 *GAME COMPLETED!*\n\n"
                     f"🏆 *Winner:* {display_name}\n"
                     f"💰 *Winnings:* ₹{winner_amount}\n"
-                    f"💼 *Commission:* ₹{commission_amount}\n"
+                    f"💼 *Commission:* ₹{commission_amount} \\(Single Commission System\\)\n"
                     f"🆔 *Game ID:* {game_data['game_id']}"
                 )
                 
@@ -1961,7 +1967,7 @@ class LudoManagerBot:
             if amount <= 0:
                 await self.send_group_response(update, context, "❌ Amount must be positive!")
                 return
-            
+             
             if not user_data:
                 await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
@@ -2283,7 +2289,7 @@ class LudoManagerBot:
             commission_percentage = float(context.args[-1])  # Last argument is percentage
             
             if commission_percentage < 0 or commission_percentage > 100:
-                await self.send_group_response(update, context, "❌ Commission rate must be between 0 and 100 (e.g., 10 for 10%, 100 for 100%)")
+                await self.send_group_response(update, context, "❌ Commission rate must be between 0 and 100 (e.g., 5 for 5%, 100 for 100%)")
                 return
                 
             # Convert percentage to decimal for storage (10% = 0.1)
