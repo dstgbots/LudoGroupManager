@@ -1244,12 +1244,15 @@ class LudoManagerBot:
                 if user_data:
                     # Update balance: Winner gets their bet back + opponent's bet minus commission
                     old_balance = user_data.get('balance', 0)
-                    new_balance = old_balance + winner_amount
                     
+                    # CRITICAL FIX: Use $inc to ADD to existing balance, not $set to overwrite
                     users_collection.update_one(
                         {'_id': user_data['_id']},
-                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                        {'$inc': {'balance': winner_amount}, '$set': {'last_updated': datetime.now()}}
                     )
+                    
+                    # Calculate new balance for display (old_balance + winner_amount)
+                    new_balance = old_balance + winner_amount
                     
                     # Record winning transaction
                     transaction_data = {
