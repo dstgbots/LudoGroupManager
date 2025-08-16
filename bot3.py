@@ -869,6 +869,14 @@ class LudoManagerBot:
             )
             
             if game_data:
+                # CRITICAL: Deduct bet amounts from all players when game is created
+                logger.info("💳 Deducting bet amounts from all players...")
+                deduction_success = await self._deduct_player_bets(game_data, context)
+                
+                if not deduction_success:
+                    logger.error("❌ Failed to deduct player bets, game creation aborted")
+                    return
+                
                 # Store game with STRING ID for consistency (CRITICAL FIX)
                 self.active_games[str(update.message.message_id)] = game_data
                 
@@ -1172,12 +1180,23 @@ class LudoManagerBot:
             
             # Calculate total pot and commission
             total_pot = game_data['total_amount']
-            commission_rate = 0.1  # 10% commission
+            
+            # Get winner's custom commission rate (default 10% if not set)
+            winner_username = winners[0]['username']
+            winner_user_data = users_collection.find_one({'username': winner_username})
+            if not winner_user_data:
+                # Try to find by user_id if username not found
+                winner_user_id = winners[0].get('user_id')
+                if winner_user_id:
+                    winner_user_data = users_collection.find_one({'user_id': winner_user_id})
+            
+            # Use winner's custom commission rate or default 10%
+            commission_rate = winner_user_data.get('commission_rate', 0.1) if winner_user_data else 0.1
             commission_amount = int(total_pot * commission_rate)
             winner_amount = total_pot - commission_amount
             
             logger.info(f"💰 Total Pot: ₹{total_pot}")
-            logger.info(f"💼 Commission : ₹{commission_amount}")
+            logger.info(f"💼 Commission ({int(commission_rate * 100)}%): ₹{commission_amount}")
             logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
             
             # Update winner's balance
@@ -1274,6 +1293,13 @@ class LudoManagerBot:
                     }
                 }
             )
+            
+            # CRITICAL: Update balance sheet after game completion
+            try:
+                await self.update_balance_sheet(None)  # Pass None since we don't have context here
+                logger.info("✅ Balance sheet updated after game completion")
+            except Exception as e:
+                logger.error(f"❌ Failed to update balance sheet after game: {e}")
             
             # Process losers (all players except winners)
             winner_usernames = [w['username'] for w in winners]
