@@ -1195,13 +1195,15 @@ class LudoManagerBot:
             commission_rate = winner_user_data.get('commission_rate', 0.05) if winner_user_data else 0.05
             
             # Single commission system: Winner gets their bet back + opponent's bet minus commission
-            winner_amount = bet_amount + int(bet_amount * (1 - commission_rate))  # Their bet + opponent's bet minus commission
-            commission_amount = int(bet_amount * commission_rate)  # Commission only on opponent's bet
+            commission_amount = round(bet_amount * commission_rate)  # Commission only on opponent's bet (use round, not int)
+            profit_amount = bet_amount - commission_amount  # Profit from opponent's bet
+            winner_amount = bet_amount + profit_amount  # Their bet back + profit from opponent
             
             logger.info(f"💰 Bet Amount per Player: ₹{bet_amount}")
             logger.info(f"💼 Commission Rate: {int(commission_rate * 100)}%")
             logger.info(f"💸 Commission Amount: ₹{commission_amount}")
-            logger.info(f"🎉 Winner Amount: ₹{winner_amount} (₹{bet_amount} + ₹{bet_amount - commission_amount})")
+            logger.info(f"💵 Profit from Opponent: ₹{profit_amount}")
+            logger.info(f"🎉 Winner Payout: ₹{winner_amount} (₹{bet_amount} bet back + ₹{profit_amount} profit)")
             
             # Update winner's balance
             for winner in winners:
@@ -1254,7 +1256,7 @@ class LudoManagerBot:
                         'user_id': user_data['user_id'],
                         'type': 'win',
                         'amount': winner_amount,
-                        'description': f'Won game {game_data["game_id"]} (Single Commission: ₹{commission_amount})',
+                        'description': f'Won game {game_data["game_id"]} (Profit: ₹{profit_amount}, Commission: ₹{commission_amount})',
                         'timestamp': datetime.now(),
                         'game_id': game_data['game_id']
                     }
@@ -1272,7 +1274,8 @@ class LudoManagerBot:
                             chat_id=user_data['user_id'],
                             text=(
                                 f"🎉 <b>You Won!</b>\n\n"
-                                f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n"
+                                f"💰 <b>Payout: ₹{winner_amount}</b>\n"
+                                f"💵 <b>Profit: ₹{profit_amount}</b>\n"
                                 f"📊 <b>Updated Balance: ₹{new_balance}</b>\n\n"
                                 f"💸 Click to instant Withdraw(https://telegram.me/SOMYA_000)\n\n"
                                 f"🔍 <a href='{table_link}'>View Table</a> 👈"
@@ -1280,9 +1283,9 @@ class LudoManagerBot:
                             parse_mode="HTML",
                             disable_web_page_preview=True
                         )
-                        logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
+                        logger.info(f"✅ Winner notification sent to {user_data.get('display_name', username)} (ID: {user_data['user_id']})")
                     except Exception as e:
-                        logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
+                        logger.error(f"❌ Could not notify winner {user_data.get('display_name', username)} (ID: {user_data['user_id']}): {e}")
                 else:
                     logger.warning(f"⚠️ Winner {username} not found in database")
             
@@ -1307,17 +1310,35 @@ class LudoManagerBot:
             except Exception as e:
                 logger.error(f"❌ Failed to update balance sheet after game: {e}")
             
-            # Process losers (all players except winners)
-            winner_usernames = [w['username'] for w in winners]
-            losers = [player for player in game_data['players'] if player['username'] not in winner_usernames]
+            # Process losers (all players except winners) - Use user_id for accurate matching
+            winner_user_ids = [w.get('user_id') for w in winners if w.get('user_id')]
+            winner_usernames = [w['username'] for w in winners]  # Fallback for display
             
-            logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
+            # Find losers by user_id first, then fallback to username
+            losers = []
+            for player in game_data['players']:
+                player_user_id = player.get('user_id')
+                player_username = player['username']
+                
+                # Check if this player is a winner by user_id (most accurate)
+                if player_user_id and player_user_id in winner_user_ids:
+                    continue
+                
+                # Fallback: check by username if no user_id match
+                if player_username in winner_usernames:
+                    continue
+                
+                # This player is not a winner, add to losers
+                losers.append(player)
+            
+            logger.info(f"😔 Processing {len(losers)} losers: {[l.get('display_name', l['username']) for l in losers]}")
             
             for loser in losers:
                 username = loser['username']
                 user_id = loser.get('user_id')  # This will be present for text_mention users
+                display_name = loser.get('display_name', username)
                 
-                logger.info(f"🔍 Processing loser: username='{username}', user_id='{user_id}'")
+                logger.info(f"🔍 Processing loser: display_name='{display_name}', user_id='{user_id}'")
                 
                 user_data = None
                 
@@ -1343,9 +1364,9 @@ class LudoManagerBot:
                         user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                     
                     if user_data:
-                        logger.info(f"✅ Found loser by username: {username}")
+                        logger.info(f"✅ Found loser by display_name: {display_name}")
                     else:
-                        logger.warning(f"⚠️ Loser {username} not found in database")
+                        logger.warning(f"⚠️ Loser {display_name} not found in database")
                 
                 if user_data:
                     # Loser doesn't get any money back (bet was already deducted)
@@ -1369,11 +1390,11 @@ class LudoManagerBot:
                             parse_mode="HTML",
                             disable_web_page_preview=True
                         )
-                        logger.info(f"✅ Loser notification sent to {user_data['user_id']}")
+                        logger.info(f"✅ Loser notification sent to {display_name} (ID: {user_data['user_id']})")
                     except Exception as e:
-                        logger.error(f"❌ Could not notify loser {user_data['user_id']}: {e}")
+                        logger.error(f"❌ Could not notify loser {display_name} (ID: {user_data['user_id']}): {e}")
                 else:
-                    logger.warning(f"⚠️ Loser {username} not found in database")
+                    logger.warning(f"⚠️ Loser {display_name} not found in database")
             
             # Notify group
             try:
@@ -1384,7 +1405,8 @@ class LudoManagerBot:
                 group_message = (
                     f"🎉 *GAME COMPLETED!*\n\n"
                     f"🏆 *Winner:* {display_name}\n"
-                    f"💰 *Winnings:* ₹{winner_amount}\n"
+                    f"💰 *Payout:* ₹{winner_amount} \\(₹{bet_amount} bet back \\+ ₹{profit_amount} profit\\)\n"
+                    f"💵 *Profit:* ₹{profit_amount}\n"
                     f"💼 *Commission:* ₹{commission_amount} \\(Single Commission System\\)\n"
                     f"🆔 *Game ID:* {game_data['game_id']}"
                 )
@@ -1972,9 +1994,27 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
                 
-            # Update balance
+            # Update balance with debt-first logic
             old_balance = user_data.get('balance', 0)
-            new_balance = old_balance + amount
+            
+            if old_balance < 0:
+                # User has debt - first clear the debt, then add remaining to positive balance
+                debt_amount = abs(old_balance)
+                if amount <= debt_amount:
+                    # Amount only covers part or all of debt
+                    new_balance = old_balance + amount
+                    debt_cleared = amount
+                    remaining_positive = 0
+                else:
+                    # Amount covers all debt and adds to positive balance
+                    debt_cleared = debt_amount
+                    remaining_positive = amount - debt_amount
+                    new_balance = remaining_positive
+            else:
+                # User has positive balance - just add to it
+                new_balance = old_balance + amount
+                debt_cleared = 0
+                remaining_positive = amount
             
             users_collection.update_one(
                 {'user_id': user_data['user_id']},
@@ -1986,7 +2026,7 @@ class LudoManagerBot:
                 'user_id': user_data['user_id'],
                 'type': 'manual_add',
                 'amount': amount,
-                'description': f'Manual balance addition by admin',
+                'description': f'Manual balance addition by admin (Debt cleared: ₹{debt_cleared}, Added to balance: ₹{remaining_positive})',
                 'timestamp': datetime.now(),
                 'admin_id': update.effective_user.id,
                 'old_balance': old_balance,
@@ -1994,32 +2034,62 @@ class LudoManagerBot:
             }
             transactions_collection.insert_one(transaction_data)
             
-            # Prepare response (no @ for text_mention users)
+            # Prepare response with debt-first breakdown
             user_identifier = username
             if username.startswith('@'):
                 user_identifier = username[1:]  # Remove @ if present
             
-            response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
-            response_msg += f"💰 Balance: ₹{old_balance} → ₹{new_balance}"
+            if old_balance < 0:
+                if amount <= debt_amount:
+                    response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
+                    response_msg += f"💰 Debt cleared: ₹{debt_cleared}\n"
+                    response_msg += f"📊 Balance: ₹{old_balance} → ₹{new_balance}"
+                else:
+                    response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
+                    response_msg += f"💰 Debt cleared: ₹{debt_cleared}\n"
+                    response_msg += f"💵 Added to balance: ₹{remaining_positive}\n"
+                    response_msg += f"📊 Balance: ₹{old_balance} → ₹{new_balance}"
+            else:
+                response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
+                response_msg += f"💰 Balance: ₹{old_balance} → ₹{new_balance}"
             
             await self.send_group_response(update, context, response_msg)
             
             # Update balance sheet
             await self.update_balance_sheet(context)
             
-            # Notify user
+            # Notify user with debt-first breakdown
             try:
+                if old_balance < 0:
+                    if amount <= debt_amount:
+                        user_message = (
+                            f"💰 <b>Deposit Balance Added</b>\n\n"
+                            f"₹{amount} added to your account by admin.\n\n"
+                            f"💰 <b>Debt cleared:</b> ₹{debt_cleared}\n"
+                            f"📊 <b>Updated balance:</b> ₹{new_balance}"
+                        )
+                    else:
+                        user_message = (
+                            f"💰 <b>Deposit Balance Added</b>\n\n"
+                            f"₹{amount} added to your account by admin.\n\n"
+                            f"💰 <b>Debt cleared:</b> ₹{debt_cleared}\n"
+                            f"💵 <b>Added to balance:</b> ₹{remaining_positive}\n"
+                            f"📊 <b>Updated balance:</b> ₹{new_balance}"
+                        )
+                else:
+                    user_message = (
+                        f"💰 <b>Deposit Balance Added</b>\n\n"
+                        f"₹{amount} added to your account by admin.\n\n"
+                        f"📊 <b>Updated balance:</b> ₹{new_balance}"
+                    )
+                
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
-                    text=(
-                        f"💰 <b>Deposit Balance Added</b>\n\n"
-                        f"₹{amount} your account by admin.\n\n"
-                        f"<b>Update balance:</b> ₹{new_balance}"
-                    ),
+                    text=user_message,
                     parse_mode="HTML"
                 )
             except Exception as e:
-                logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
+                logger.warning(f"Could not notify user {user_data.get('display_name', username)} (ID: {user_data['user_id']}): {e}")
                 
         except ValueError:
             await self.send_group_response(update, context, "❌ Invalid amount. Please enter a number.")
@@ -3100,7 +3170,7 @@ async def main():
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
     GROUP_ID = -1002849354155
-    ADMIN_IDS = [739290618]
+    ADMIN_IDS = [2109516065]
     
     print(f"🚀 Starting Ludo Manager Bot...")
     print(f"🔑 Bot Token: {BOT_TOKEN[:20]}...")
