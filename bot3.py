@@ -1170,27 +1170,15 @@ class LudoManagerBot:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # Calculate proper winner payout and commission
+            # Calculate total pot and commission
             total_pot = game_data['total_amount']
-            bet_amount_per_player = total_pot // len(game_data['players'])  # Amount each player bet
+            commission_rate = 0.1  # 10% commission
+            commission_amount = int(total_pot * commission_rate)
+            winner_amount = total_pot - commission_amount
             
-            # Get winner's commission rate (default 5%)
-            winner_username = winners[0]['username']
-            winner_user_data = users_collection.find_one({'username': winner_username})
-            commission_rate = winner_user_data.get('commission_rate', 0.05) if winner_user_data else 0.05  # Default 5%
-            
-            # Calculate commission on opponent's bet (single commission system)
-            commission_amount = round(bet_amount_per_player * commission_rate)  # Use round() for accuracy
-            profit_amount = bet_amount_per_player - commission_amount  # Profit from opponent's bet
-            
-            # Winner gets: their bet back + profit from opponent
-            winner_amount = bet_amount_per_player + profit_amount
-            
-            logger.info(f"💰 Bet Amount per Player: ₹{bet_amount_per_player}")
-            logger.info(f"💼 Commission Rate: {int(commission_rate * 100)}%")
-            logger.info(f"💸 Commission Amount: ₹{commission_amount}")
-            logger.info(f"💵 Profit from Opponent: ₹{profit_amount}")
-            logger.info(f"🎉 Winner Payout: ₹{winner_amount} (₹{bet_amount_per_player} bet back + ₹{profit_amount} profit)")
+            logger.info(f"💰 Total Pot: ₹{total_pot}")
+            logger.info(f"💼 Commission : ₹{commission_amount}")
+            logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
             
             # Update winner's balance
             for winner in winners:
@@ -1229,30 +1217,26 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Winner {username} not found in database")
                 
                 if user_data:
-                    # CRITICAL FIX: Get current balance and calculate new balance
-                    old_balance = user_data.get('balance', 0)
+                    # Update balance
+                    new_balance = user_data.get('balance', 0) + winner_amount
                     
-                    # CRITICAL FIX: Use $inc to ADD to existing balance, not $set to overwrite
                     users_collection.update_one(
                         {'_id': user_data['_id']},
-                        {'$inc': {'balance': winner_amount}, '$set': {'last_updated': datetime.now()}}
+                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
                     )
-                    
-                    # Calculate new balance for display (old_balance + winner_amount)
-                    new_balance = old_balance + winner_amount
                     
                     # Record winning transaction
                     transaction_data = {
                         'user_id': user_data['user_id'],
                         'type': 'win',
                         'amount': winner_amount,
-                        'description': f'Won game {game_data["game_id"]} (Profit: ₹{profit_amount}, Commission: ₹{commission_amount})',
+                        'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
                         'timestamp': datetime.now(),
                         'game_id': game_data['game_id']
                     }
                     transactions_collection.insert_one(transaction_data)
                     
-                    # Notify winner with proper format
+                    # Notify winner
                     try:
                         # Generate link to the original game table message
                         table_link = self._generate_message_link(
@@ -1263,9 +1247,7 @@ class LudoManagerBot:
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=(
-                                f"🎉 <b>You Won!</b>\n\n"
-                                f"💰 <b>Payout: ₹{winner_amount}</b>\n"
-                                f"💵 <b>Profit: ₹{profit_amount}</b>\n"
+                                f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n\n"
                                 f"📊 <b>Updated Balance: ₹{new_balance}</b>\n\n"
                                 f"💸 Click to instant Withdraw(https://telegram.me/SOMYA_000)\n\n"
                                 f"🔍 <a href='{table_link}'>View Table</a> 👈"
@@ -1273,12 +1255,11 @@ class LudoManagerBot:
                             parse_mode="HTML",
                             disable_web_page_preview=True
                         )
-                        logger.info(f"✅ Winner notification sent to {user_data.get('display_name', username)} (ID: {user_data['user_id']})")
+                        logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
                     except Exception as e:
-                        logger.error(f"❌ Could not notify winner {user_data.get('display_name', username)} (ID: {user_data['user_id']}): {e}")
+                        logger.error(f"❌ Could not notify winner {user_data['user_id']}: {e}")
                 else:
-                    logger.error(f"❌ Winner {username} not found in database")
-                    return
+                    logger.warning(f"⚠️ Winner {username} not found in database")
             
             # Update game status
             games_collection.update_one(
@@ -1348,7 +1329,7 @@ class LudoManagerBot:
                             chat_id=user_data['user_id'],
                             text=(
                                 f"😔 <b>You Lost!</b>\n\n"
-                                f"💰 <b>Amount Lost:</b> ₹{bet_amount_per_player}\n"
+                                f"💰 <b>Amount Lost:</b> ₹{game_data['bet_amount']}\n"
                                 f"📊 <b>Current Balance:</b> ₹{user_data.get('balance', 0)}\n\n"
                                 f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
                                 f"Better luck next time! 🍀"
@@ -1371,9 +1352,8 @@ class LudoManagerBot:
                 group_message = (
                     f"🎉 *GAME COMPLETED!*\n\n"
                     f"🏆 *Winner:* {display_name}\n"
-                    f"💰 *Payout:* ₹{winner_amount} \\(₹{bet_amount_per_player} bet back \\+ ₹{profit_amount} profit\\)\n"
-                    f"💵 *Profit:* ₹{profit_amount}\n"
-                    f"💼 *Commission:* ₹{commission_amount} \\(Single Commission System\\)\n"
+                    f"💰 *Winnings:* ₹{winner_amount}\n"
+                    f"💼 *Commission:* ₹{commission_amount}\n"
                     f"🆔 *Game ID:* {game_data['game_id']}"
                 )
                 
