@@ -778,10 +778,33 @@ class LudoManagerBot:
                 
                 # Look for amount with "Full" keyword
                 if "full" in line.lower():
-                    match = re.search(r"(\d+)\s*[Ff]ull", line)
+                    # Support both formats: "1000 Full", "1k Full", "10k Full", etc.
+                    # Pattern: matches numbers like 1000, 1k, 2k, 10k, 20k, 15k
+                    match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", line)
                     if match:
-                        amount = int(match.group(1))
-                        logger.info(f"💰 Amount found: {amount}")
+                        amount_str = match.group(1)
+                        logger.info(f"💰 Amount string found: {amount_str}")
+                        
+                        # Convert k format to actual number
+                        if amount_str.lower().endswith('k'):
+                            # Remove 'k' and multiply by 1000
+                            number_part = int(amount_str[:-1])
+                            amount = number_part * 1000
+                            logger.info(f"💰 K format amount: {amount_str} = ₹{amount}")
+                        else:
+                            # Regular number format
+                            amount = int(amount_str)
+                            logger.info(f"💰 Regular amount: {amount_str} = ₹{amount}")
+                        
+                        # Validate amount (must be positive and reasonable)
+                        if amount <= 0:
+                            logger.warning(f"⚠️ Invalid amount: {amount} (must be positive)")
+                            amount = None
+                        elif amount > 1000000:  # 1 million limit
+                            logger.warning(f"⚠️ Amount too high: {amount} (max ₹1,000,000)")
+                            amount = None
+                        else:
+                            logger.info(f"✅ Valid amount: ₹{amount}")
                 else:
                     # Extract username with or without @
                     match = re.search(r"@?([a-zA-Z0-9_]+)", line)
@@ -862,6 +885,34 @@ class LudoManagerBot:
     
             # Create game data with STRING ID for consistency (CRITICAL FIX)
             game_id = f"game_{int(datetime.now().timestamp())}_{message_id}"
+            
+            # Get commission rates for each player
+            player_commission_rates = {}
+            for player in valid_players:
+                username = player['username']
+                user_id = player.get('user_id')
+                
+                # Find user in database to get their commission rate
+                user_data = None
+                if user_id:
+                    user_data = users_collection.find_one({'user_id': int(user_id)})
+                
+                if not user_data:
+                    user_data = users_collection.find_one({'username': username})
+                
+                if not user_data:
+                    user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                
+                if user_data:
+                    # Get user's personal commission rate, default to 5% if not set
+                    commission_rate = user_data.get('commission_rate', 0.05)
+                    player_commission_rates[username] = commission_rate
+                    logger.info(f"💰 Player {username} commission rate: {int(commission_rate * 100)}%")
+                else:
+                    # Default commission rate if user not found
+                    player_commission_rates[username] = 0.05
+                    logger.warning(f"⚠️ Player {username} not found, using default 5% commission")
+            
             game_data = {
                 'game_id': game_id,
                 'admin_user_id': admin_user_id,
@@ -872,7 +923,8 @@ class LudoManagerBot:
                 'total_amount': amount * len(valid_players),
                 'status': 'active',
                 'created_at': datetime.now(),
-                'expires_at': datetime.now() + timedelta(hours=1)
+                'expires_at': datetime.now() + timedelta(hours=1),
+                'player_commission_rates': player_commission_rates  # Store commission rates for each player
             }
             
             logger.info(f"🎮 Game data created: {game_data}")
@@ -1092,16 +1144,62 @@ class LudoManagerBot:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # NEW LOGIC: Deduct bet from losers, credit profit to winner
-            # Find the loser's bet amount (assuming 2-player game)
+            # Get the bet amount from game data
             bet_amount = game_data['bet_amount']  # Each player's bet
-            commission_rate = 0.05  # 5% commission
-            commission_amount = int(bet_amount * commission_rate)
-            winner_profit = bet_amount - commission_amount  # Winner gets 95% of loser's bet as profit
             
-            logger.info(f"💰 Each Player's Bet: ₹{bet_amount}")
-            logger.info(f"💼 Commission (5%): ₹{commission_amount}")
-            logger.info(f"🎉 Winner Profit (95% of loser's bet): ₹{winner_profit}")
+            # Get commission rates from game data (already stored when game was created)
+            player_commission_rates = game_data.get('player_commission_rates', {})
+            
+            # Process winners first to get their commission rates
+            winner_commission_rates = {}
+            for winner in winners:
+                username = winner['username']
+                
+                # Use commission rate from game data if available, otherwise fallback to user lookup
+                if username in player_commission_rates:
+                    commission_rate = player_commission_rates[username]
+                    winner_commission_rates[username] = commission_rate
+                    logger.info(f"💰 Winner {username} commission rate from game data: {int(commission_rate * 100)}%")
+                else:
+                    # Fallback: find winner's user data to get their commission rate
+                    user_id = winner.get('user_id')
+                    user_data = None
+                    
+                    if user_id and str(user_id).isdigit():
+                        user_data = users_collection.find_one({'user_id': int(user_id)})
+                    
+                    if not user_data:
+                        user_data = users_collection.find_one({'username': username})
+                    
+                    if not user_data:
+                        user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    if user_data:
+                        # Get winner's personal commission rate, default to 5% if not set
+                        personal_commission_rate = user_data.get('commission_rate', 0.05)
+                        winner_commission_rates[username] = personal_commission_rate
+                        logger.info(f"💰 Winner {username} commission rate from user data: {int(personal_commission_rate * 100)}%")
+                    else:
+                        # Default commission rate if user not found
+                        winner_commission_rates[username] = 0.05
+                        logger.warning(f"⚠️ Winner {username} not found, using default 5% commission")
+            
+            # Calculate commission and profit for each winner
+            winner_profits = {}
+            total_commission = 0
+            
+            for winner in winners:
+                username = winner['username']
+                commission_rate = winner_commission_rates[username]
+                commission_amount = int(bet_amount * commission_rate)
+                winner_profit = bet_amount - commission_amount
+                
+                winner_profits[username] = winner_profit
+                total_commission += commission_amount
+                
+                logger.info(f"💰 Winner {username}: Bet ₹{bet_amount}, Commission ₹{commission_amount} ({int(commission_rate * 100)}%), Profit ₹{winner_profit}")
+            
+            logger.info(f"💼 Total Commission: ₹{total_commission}")
             
             # First, process losers - deduct their bet amount
             winner_usernames = [w['username'] for w in winners]
@@ -1258,6 +1356,11 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Winner {username} not found in database")
                 
                 if user_data:
+                    # Get this winner's profit based on their personal commission rate
+                    winner_profit = winner_profits.get(username, 0)
+                    commission_rate = winner_commission_rates.get(username, 0.05)
+                    commission_amount = int(bet_amount * commission_rate)
+                    
                     # Update balance - add only the profit (winner keeps their original bet)
                     old_balance = user_data.get('balance', 0)
                     new_balance = old_balance + winner_profit
@@ -1272,15 +1375,17 @@ class LudoManagerBot:
                         'user_id': user_data['user_id'],
                         'type': 'win',
                         'amount': winner_profit,
-                        'description': f'Won game {game_data["game_id"]} - profit from opponent bet (₹{bet_amount}) minus 5% commission (₹{commission_amount})',
+                        'description': f'Won game {game_data["game_id"]} - profit from opponent bet (₹{bet_amount}) minus {int(commission_rate * 100)}% commission (₹{commission_amount})',
                         'timestamp': datetime.now(),
                         'game_id': game_data['game_id'],
                         'old_balance': old_balance,
-                        'new_balance': new_balance
+                        'new_balance': new_balance,
+                        'commission_rate': commission_rate,
+                        'commission_amount': commission_amount
                     }
                     transactions_collection.insert_one(transaction_data)
                     
-                    logger.info(f"🎉 Added ₹{winner_profit} profit to winner {username} (₹{old_balance} → ₹{new_balance})")
+                    logger.info(f"🎉 Added ₹{winner_profit} profit to winner {username} (₹{old_balance} → ₹{new_balance}) with {int(commission_rate * 100)}% commission")
                     
                     # Notify winner
                     try:
@@ -1294,6 +1399,7 @@ class LudoManagerBot:
                             chat_id=user_data['user_id'],
                             text = (
                                 f"💰 <b>Profit Credited:</b> ₹{winner_profit}\n"
+                                f"💼 <b>Commission Deducted:</b> ₹{commission_amount} ({int(commission_rate * 100)}%)\n"
                                 f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
                                 f"💡 Your bet (₹{bet_amount}) was safe – only profit added!\n\n"
                                 f"💸 <a href='https://t.me/SOMYA_000'>Instant Withdraw</a>\n"
@@ -1308,16 +1414,17 @@ class LudoManagerBot:
                 else:
                     logger.warning(f"⚠️ Winner {username} not found in database")
             
-            # Update game status
+            # Update game status with commission information
             games_collection.update_one(
                 {'game_id': game_data['game_id']},
                 {
                     '$set': {
                         'status': 'completed',
                         'winner': winners[0]['username'],
-                        'winner_amount': winner_profit,
-                        'admin_fee': commission_amount,
-                        'completed_at': datetime.now()
+                        'winner_amount': winner_profits.get(winners[0]['username'], 0),
+                        'admin_fee': total_commission,
+                        'completed_at': datetime.now(),
+                        'commission_rates': winner_commission_rates  # Store commission rates for future reference
                     }
                 }
             )
@@ -1355,6 +1462,7 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("balancesheet", self.balance_sheet_command))
         application.add_handler(CommandHandler("stats", self.stats_command))
         application.add_handler(CommandHandler("cancel", self.cancel_table_command))
+        application.add_handler(CommandHandler("testkformat", self.test_k_format_command))
         
         # Message handlers
         application.add_handler(MessageHandler(
@@ -2528,14 +2636,46 @@ class LudoManagerBot:
             
             # Check if this message ID corresponds to an active game
             if replied_message_id not in self.active_games:
-                await self.send_group_response(update, context, "❌ No active game found for this message. The game might have already been completed or expired.")
+                # Check if it's a completed game in the database
+                game_data = games_collection.find_one({'admin_message_id': int(replied_message_id)})
+                if not game_data:
+                    await self.send_group_response(update, context, "❌ No active or completed game found for this message.")
+                    return
+                
+                if game_data['status'] == 'completed':
+                    # Handle cancellation of completed game with refunds
+                    logger.info(f"🎮 Cancelling completed game: {game_data['game_id']}")
+                    success = await self._cancel_completed_game_with_refunds(game_data, update.effective_user.id)
+                    
+                    if success:
+                        # Update game status in database
+                        games_collection.update_one(
+                            {'game_id': game_data['game_id']},
+                            {
+                                '$set': {
+                                    'status': 'cancelled',
+                                    'cancelled_at': datetime.now(),
+                                    'cancelled_by': update.effective_user.id
+                                }
+                            }
+                        )
+                        
+                        # Update balance sheet
+                        await self.update_balance_sheet(context)
+                        
+                        await self.send_group_response(update, context, f"✅ Completed game {game_data['game_id']} has been cancelled and all players refunded with commission.")
+                        logger.info(f"✅ Completed game {game_data['game_id']} cancelled and refunded successfully")
+                    else:
+                        await self.send_group_response(update, context, "❌ Failed to cancel the completed game. Please try again.")
+                else:
+                    await self.send_group_response(update, context, "❌ This game is not active or completed. Cannot cancel.")
                 return
             
-            # Get the game data
+            # Get the game data from active games
             game_data = self.active_games[replied_message_id]
-            logger.info(f"🎮 Cancelling game: {game_data['game_id']}")
+            logger.info(f"🎮 Cancelling active game: {game_data['game_id']}")
             
-            # Cancel the game and refund all players
+            # Cancel the active game (no refunds needed since no bets were deducted)
             success = await self._cancel_and_refund_game(game_data, update.effective_user.id)
             
             if success:
@@ -2557,10 +2697,10 @@ class LudoManagerBot:
                 # Update balance sheet
                 await self.update_balance_sheet(context)
                 
-                await self.send_group_response(update, context, f"✅ Game {game_data['game_id']} has been cancelled and all players refunded.")
-                logger.info(f"✅ Game {game_data['game_id']} cancelled successfully")
+                await self.send_group_response(update, context, f"✅ Active game {game_data['game_id']} has been cancelled and all players notified.")
+                logger.info(f"✅ Active game {game_data['game_id']} cancelled successfully")
             else:
-                await self.send_group_response(update, context, "❌ Failed to cancel the game. Please try again.")
+                await self.send_group_response(update, context, "❌ Failed to cancel the active game. Please try again.")
                 
         except Exception as e:
             logger.error(f"❌ Error in cancel table command: {e}")
@@ -3033,6 +3173,181 @@ class LudoManagerBot:
             logger.error(f"❌ Error creating balance sheet: {e}")
             logger.error(f"🔍 Group ID: {self.group_id}")
 
+    async def _cancel_completed_game_with_refunds(self, game_data: Dict, admin_id: int) -> bool:
+        """Cancel a completed game and refund all players with commission"""
+        try:
+            logger.info(f"🔄 Cancelling completed game {game_data['game_id']} and refunding players with commission")
+            
+            successful_refunds = []
+            failed_players = []
+            
+            # Get the commission rate for this game
+            commission_rate = game_data.get('commission_rate', 0.05)  # Default 5%
+            bet_amount = game_data.get('bet_amount', 0)
+            
+            # Get winner information if available
+            winner_username = game_data.get('winner')
+            winner_profit = game_data.get('winner_amount', 0)
+            
+            # Process all players (including winner)
+            for player in game_data['players']:
+                username = player['username']
+                user_id = player.get('user_id')
+                
+                try:
+                    # Find user in database
+                    user_data = None
+                    if user_id:
+                        user_data = users_collection.find_one({'user_id': int(user_id)})
+                    
+                    if not user_data:
+                        # Try to find by username
+                        user_data = users_collection.find_one({'username': username})
+                    
+                    if not user_data:
+                        logger.error(f"❌ Player {username} not found in database")
+                        failed_players.append(username)
+                        continue
+                    
+                    # Calculate refund amount based on whether this player was the winner
+                    if username == winner_username:
+                        # Winner gets full bet refund minus commission, but loses any profit they earned
+                        commission_amount = bet_amount * commission_rate
+                        refund_amount = bet_amount - commission_amount
+                        
+                        # If winner received profit, deduct it from their balance
+                        if winner_profit > 0:
+                            old_balance = user_data.get('balance', 0)
+                            # Deduct the profit they earned, then add the refund
+                            new_balance = old_balance - winner_profit + refund_amount
+                            
+                            logger.info(f"💰 Winner {username}: Deducted profit ₹{winner_profit}, refunded ₹{refund_amount} (₹{old_balance} → ₹{new_balance})")
+                        else:
+                            old_balance = user_data.get('balance', 0)
+                            new_balance = old_balance + refund_amount
+                            logger.info(f"💰 Winner {username}: Refunded ₹{refund_amount} (₹{old_balance} → ₹{new_balance})")
+                    else:
+                        # Loser gets full bet refund minus commission
+                        commission_amount = bet_amount * commission_rate
+                        refund_amount = bet_amount - commission_amount
+                        
+                        old_balance = user_data.get('balance', 0)
+                        new_balance = old_balance + refund_amount
+                        logger.info(f"💰 Loser {username}: Refunded ₹{refund_amount} (₹{old_balance} → ₹{new_balance})")
+                    
+                    # Update user balance
+                    users_collection.update_one(
+                        {'_id': user_data['_id']},
+                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                    )
+                    
+                    # Record refund transaction
+                    transaction_type = 'winner_cancellation_refund' if username == winner_username else 'loser_cancellation_refund'
+                    transaction_data = {
+                        'user_id': user_data['user_id'],
+                        'type': transaction_type,
+                        'amount': refund_amount,
+                        'description': f'Game {game_data["game_id"]} cancelled - refund with {int(commission_rate * 100)}% commission',
+                        'timestamp': datetime.now(),
+                        'game_id': game_data['game_id'],
+                        'old_balance': old_balance,
+                        'new_balance': new_balance,
+                        'commission_deducted': commission_amount,
+                        'was_winner': username == winner_username,
+                        'profit_deducted': winner_profit if username == winner_username else 0
+                    }
+                    transactions_collection.insert_one(transaction_data)
+                    
+                    successful_refunds.append(username)
+                    
+                    # Notify player about game cancellation and refund
+                    try:
+                        # Generate link to the original game table message
+                        table_link = self._generate_message_link(
+                            game_data['chat_id'], 
+                            int(game_data['admin_message_id'])
+                        )
+                        
+                        if username == winner_username:
+                            notification_text = (
+                                f"🚫 <b>Game Cancelled</b>\n\n"
+                                f"💰 <b>Refund Processed:</b> ₹{refund_amount}\n"
+                                f"💸 <b>Profit Deducted:</b> ₹{winner_profit}\n"
+                                f"💼 <b>Commission Deducted:</b> ₹{commission_amount} ({int(commission_rate * 100)}%)\n"
+                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"🔍 <a href='{table_link}'>View Game Table</a>"
+                            )
+                        else:
+                            notification_text = (
+                                f"🚫 <b>Game Cancelled</b>\n\n"
+                                f"💰 <b>Refund Processed:</b> ₹{refund_amount}\n"
+                                f"💼 <b>Commission Deducted:</b> ₹{commission_amount} ({int(commission_rate * 100)}%)\n"
+                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"🔍 <a href='{table_link}'>View Game Table</a>"
+                            )
+                        
+                        await self.application.bot.send_message(
+                            chat_id=user_data['user_id'],
+                            text=notification_text,
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
+                        )
+                        logger.info(f"✅ Refund notification sent to {username}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not notify {username} about refund: {e}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error processing refund for {username}: {e}")
+                    failed_players.append(username)
+            
+            if failed_players:
+                logger.error(f"❌ Failed to refund players: {failed_players}")
+                return False
+            
+            logger.info(f"✅ Successfully refunded all {len(successful_refunds)} players")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in _cancel_completed_game_with_refunds: {e}")
+            return False
+
+    async def test_k_format_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Test command to verify k format amount detection"""
+        if update.effective_user.id not in self.admin_ids:
+            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            return
+        
+        test_cases = [
+            "1k Full",
+            "2k Full", 
+            "3k Full",
+            "10k Full",
+            "20k Full",
+            "15k Full",
+            "100 Full",
+            "1000 Full",
+            "50000 Full"
+        ]
+        
+        results = []
+        for test_case in test_cases:
+            # Test the regex pattern
+            match = re.search(r"(\d+(?:k|K)?)\s*[Ff]ull", test_case)
+            if match:
+                amount_str = match.group(1)
+                if amount_str.lower().endswith('k'):
+                    number_part = int(amount_str[:-1])
+                    amount = number_part * 1000
+                    results.append(f"✅ {test_case} → {amount_str} → ₹{amount}")
+                else:
+                    amount = int(amount_str)
+                    results.append(f"✅ {test_case} → {amount_str} → ₹{amount}")
+            else:
+                results.append(f"❌ {test_case} → No match")
+        
+        test_message = "🧪 **K Format Amount Detection Test**\n\n" + "\n".join(results)
+        await self.send_group_response(update, context, test_message)
+
 async def main():
     """Main entry point"""
     # Configuration - replace with your actual values
@@ -3040,7 +3355,7 @@ async def main():
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
     GROUP_ID = -1002849354155
-    ADMIN_IDS = [739290618]
+    ADMIN_IDS = [5948740136]
     
     print(f"🚀 Starting Ludo Manager Bot...")
     print(f"🔑 Bot Token: {BOT_TOKEN[:20]}...")
