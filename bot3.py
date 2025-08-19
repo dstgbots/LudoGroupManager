@@ -3044,7 +3044,7 @@ class LudoManagerBot:
                 if balance > 0:
                     content += f"🙏 {account_name} = ₹{balance}\n"
                 elif balance < 0:
-                    content += f"🙏 {account_name} = -₹{abs(balance)} (Debt)\n"
+                    content += f"🙏 {account_name} = -₹{abs(balance)}\n"
                 else:
                     content += f"🙏 {account_name} = ₹{balance}\n"
             
