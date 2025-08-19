@@ -521,32 +521,44 @@ class LudoManagerBot:
                                     logger.info(f"🎯 Winner found by user_id (exact): {winner_player}")
                                     break
                         
-                        # Priority 2: Match by username (case-insensitive for @mention)
-                        if not winner_player and winner_info.get('type') == 'mention':
+                        # Priority 2: Match by username (case-insensitive for @mention and fallback_mention)
+                        if not winner_player and winner_info.get('type') in ['mention', 'fallback_mention']:
                             target_username = winner_info.get('username', '').lower()
+                            logger.info(f"🔍 Matching @mention by username: '{target_username}'")
                             for player in game_data['players']:
-                                if player.get('username', '').lower() == target_username:
+                                player_username = player.get('username', '').lower()
+                                if player_username == target_username:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by username (case-insensitive): {winner_player}")
                                     break
                         
-                        # Priority 3: Match by display_name (full match, then partial)
-                        if not winner_player:
-                            target_display_name = winner_info.get('display_name', '').lower()
+                        # Priority 3: For fallback (plain text), try username match first, then display_name
+                        if not winner_player and winner_info.get('type') == 'fallback':
+                            target_name = winner_info.get('username', '').lower()
+                            logger.info(f"🔍 Fallback matching for: '{target_name}'")
+                            
+                            # Try username match first
                             for player in game_data['players']:
-                                player_display_name = player.get('display_name', '').lower()
-                                
-                                # Full match first
-                                if player_display_name == target_display_name:
+                                player_username = player.get('username', '').lower()
+                                if player_username == target_name:
                                     winner_player = player
-                                    logger.info(f"🎯 Winner found by display_name (full match): {winner_player}")
+                                    logger.info(f"🎯 Winner found by fallback username match: {winner_player}")
                                     break
-                                
-                                # Partial match (check if target is contained in player name)
-                                elif target_display_name in player_display_name:
-                                    winner_player = player
-                                    logger.info(f"🎯 Winner found by display_name (partial match): {winner_player}")
-                                    break
+                            
+                            # If not found by username, try display_name match
+                            if not winner_player:
+                                for player in game_data['players']:
+                                    player_display_name = player.get('display_name', '').lower()
+                                    # Full match first
+                                    if player_display_name == target_name:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by fallback display_name (full match): {winner_player}")
+                                        break
+                                    # Partial match (check if target is contained in player name)
+                                    elif target_name in player_display_name:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by fallback display_name (partial match): {winner_player}")
+                                        break
                         
                         if winner_player:
                             logger.info(f"✅ Found winner player: {winner_player}")
@@ -558,8 +570,10 @@ class LudoManagerBot:
                             }]
                         else:
                             logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
-                            logger.warning(f"⚠️ Available players: {[p.get('display_name', '') for p in game_data['players']]}")
-                            winners = [{'username': winner_info.get('display_name', 'Unknown'), 'bet_amount': game_data['bet_amount']}]
+                            logger.warning(f"⚠️ Available players: {[p.get('username', 'no_username') for p in game_data['players']]}")
+                            # Use the username from winner_info, not display_name
+                            fallback_username = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
+                            winners = [{'username': fallback_username, 'bet_amount': game_data['bet_amount']}]
                         
                         # Process the game result
                         await self.process_game_result_from_winner(game_data, winners, message)
@@ -618,30 +632,40 @@ class LudoManagerBot:
                                         winner_info = {
                                             'type': 'text_mention',
                                             'user_id': user.id,
-                                            'display_name': winner_text,
-                                            'username': user.username or f"user_{user.id}"
+                                            'username': user.username or f"user_{user.id}",
+                                            'display_name': winner_text
                                         }
                                         logger.info(f"✅ Winner found via text_mention: {winner_info}")
                                         return winner_info
                                 
                                 elif getattr(entity, 'type', '') == "mention":
-                                    # @username mention
+                                    # @username mention - extract username correctly
                                     mention_text = message_text[entity_start:entity_end]
                                     username = mention_text.lstrip('@')
                                     winner_info = {
                                         'type': 'mention',
                                         'username': username,
-                                        'display_name': winner_text
+                                        'display_name': username  # For @mentions, keep username as display_name
                                     }
                                     logger.info(f"✅ Winner found via @mention: {winner_info}")
                                     return winner_info
                     
-                    # Fallback: no entities, use the full text before ✅
-                    winner_info = {
-                        'type': 'fallback',
-                        'display_name': winner_text,
-                        'username': winner_text.lstrip('@') if winner_text.startswith('@') else winner_text
-                    }
+                    # Fallback: no entities, parse the text before ✅
+                    if winner_text.startswith('@'):
+                        # It's an @mention without entity data
+                        username = winner_text.lstrip('@')
+                        winner_info = {
+                            'type': 'fallback_mention',
+                            'username': username,
+                            'display_name': username
+                        }
+                    else:
+                        # Plain text fallback
+                        winner_info = {
+                            'type': 'fallback',
+                            'username': winner_text,
+                            'display_name': winner_text
+                        }
                     logger.info(f"✅ Winner found via fallback: {winner_info}")
                     return winner_info
             
@@ -1293,8 +1317,19 @@ class LudoManagerBot:
             )
             
             # Process losers (all players except winners)
+            # Use both username and user_id for exclusion to prevent double-counting
             winner_usernames = [w['username'] for w in winners]
-            losers = [player for player in game_data['players'] if player['username'] not in winner_usernames]
+            winner_user_ids = [w.get('user_id') for w in winners if w.get('user_id')]
+            
+            losers = []
+            for player in game_data['players']:
+                # Exclude if username matches
+                if player['username'] in winner_usernames:
+                    continue
+                # Exclude if user_id matches (prevents double-counting when username doesn't match)
+                if player.get('user_id') in winner_user_ids:
+                    continue
+                losers.append(player)
             
             logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
             
