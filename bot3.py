@@ -899,21 +899,9 @@ class LudoManagerBot:
                 logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                 logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                 
-                # CRITICAL FIX: Deduct bet amounts from all players when game starts
-                bet_deduction_success = await self._deduct_player_bets(game_data, context)
-                
-                if not bet_deduction_success:
-                    # If bet deduction fails, remove the game and don't proceed
-                    del self.active_games[str(update.message.message_id)]
-                    logger.error(f"❌ Game {game_data['game_id']} cancelled due to bet deduction failure")
-                    return
-                
-                # Store game in database only after successful bet deduction
+                # Store game in database
                 games_collection.insert_one(game_data)
-                logger.info(f"✅ Game {game_data['game_id']} created successfully with bets deducted")
-                
-                # Update balance sheet after bet deductions
-                await self.update_balance_sheet(context)
+                logger.info(f"✅ Game {game_data['game_id']} created successfully")
                 
                 # Removed noisy group confirmation message per user request
                 # await self._send_group_confirmation(context, update.effective_chat.id)
@@ -996,144 +984,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error sending table rejection message: {e}")
 
-    async def _deduct_player_bets(self, game_data: Dict, context: ContextTypes.DEFAULT_TYPE = None) -> bool:
-        """Deduct bet amounts from all players' balances when game is created"""
-        try:
-            logger.info(f"💳 Deducting bet amounts for game {game_data['game_id']}")
-            
-            successful_deductions = []
-            failed_players = []
-            
-            for i, player in enumerate(game_data['players']):
-                username = player['username']
-                bet_amount = player['bet_amount']
-                
-                try:
-                    # Use the new user mention resolver
-                    user_data = await self._resolve_user_mention(username, None)
-                    
-                    if not user_data:
-                        logger.error(f"❌ Player {username} not found in database")
-                        failed_players.append(username)
-                        continue
-                    
-                    # Deduct bet amount from user balance (allow negative balances)
-                    old_balance = user_data.get('balance', 0)
-                    new_balance = old_balance - bet_amount
-                    
-                    # Update user balance
-                    users_collection.update_one(
-                        {'_id': user_data['_id']},
-                        {
-                            '$set': {
-                                'balance': new_balance,
-                                'last_updated': datetime.now()
-                            }
-                        }
-                    )
-                    
-                    # Record bet transaction
-                    transaction_data = {
-                        'user_id': user_data['user_id'],
-                        'type': 'bet',
-                        'amount': -bet_amount,  # Negative because it's a deduction
-                        'description': f'Bet placed in game {game_data["game_id"]}',
-                        'timestamp': datetime.now(),
-                        'game_id': game_data['game_id'],
-                        'old_balance': old_balance,
-                        'new_balance': new_balance
-                    }
-                    transactions_collection.insert_one(transaction_data)
-                    
-                    # Update player data with user_id for later use
-                    game_data['players'][i]['user_id'] = user_data['user_id']
-                    
-                    logger.info(f"✅ Deducted ₹{bet_amount} from {username} (₹{old_balance} → ₹{new_balance})")
-                    successful_deductions.append(username)
-                    
-                    # Notify player about bet deduction
-                    try:
-                        # Generate link to the original game table message
-                        table_link = self._generate_message_link(
-                            game_data['chat_id'], 
-                            int(game_data['admin_message_id'])
-                        )
-                        
-                        await self.application.bot.send_message(
-                            chat_id=user_data['user_id'],
-                            text=(
-                                f"🎮 <b>Game Joined!</b>\n\n"
-                                f"💰 <b>Bet Amount:</b> ₹{bet_amount}\n"
-                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
-                                f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
-                                f"Good luck! 🍀"
-                            ),
-                            parse_mode="HTML",
-                            disable_web_page_preview=True
-                        )
-                        logger.info(f"✅ Bet notification sent to {username}")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not notify {username} about bet: {e}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error deducting bet for {username}: {e}")
-                    failed_players.append(username)
-            
-            if failed_players:
-                logger.error(f"❌ Failed to deduct bets for players: {failed_players}")
-                # Refund successful deductions since game creation failed
-                await self._refund_failed_game(successful_deductions, game_data)
-                return False
-            
-            logger.info(f"✅ Successfully deducted bets from all {len(successful_deductions)} players")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error in _deduct_player_bets: {e}")
-            return False
-    
-    async def _refund_failed_game(self, successful_players: List[str], game_data: Dict):
-        """Refund bet amounts if game creation fails"""
-        try:
-            logger.info(f"🔄 Refunding bets for failed game {game_data['game_id']}")
-            
-            for username in successful_players:
-                user_data = await self._resolve_user_mention(username, None)
-                
-                if user_data:
-                    bet_amount = next(p['bet_amount'] for p in game_data['players'] if p['username'] == username)
-                    old_balance = user_data.get('balance', 0)
-                    new_balance = old_balance + bet_amount
-                    
-                    # Refund the bet amount
-                    users_collection.update_one(
-                        {'_id': user_data['_id']},
-                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
-                    )
-                    
-                    # Record refund transaction
-                    transaction_data = {
-                        'user_id': user_data['user_id'],
-                        'type': 'refund',
-                        'amount': bet_amount,
-                        'description': f'Refund for failed game {game_data["game_id"]}',
-                        'timestamp': datetime.now(),
-                        'game_id': game_data['game_id']
-                    }
-                    transactions_collection.insert_one(transaction_data)
-                    
-                    logger.info(f"✅ Refunded ₹{bet_amount} to {username}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Error refunding failed game: {e}")
-        finally:
-            # Always attempt to refresh balance sheet after refunds
-            try:
-                if hasattr(self, 'application') and self.application:
-                    await self.update_balance_sheet(None)
-            except Exception as e:
-                logger.warning(f"⚠️ Could not update balance sheet after failed-game refunds: {e}")
-    
+
     async def _send_group_confirmation(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         """Send confirmation message to group with proper MarkdownV2 formatting"""
         try:
@@ -1210,18 +1061,120 @@ class LudoManagerBot:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # NEW LOGIC: Winner gets 95% of loser's bet amount (5% commission)
+            # NEW LOGIC: Deduct bet from losers, credit profit to winner
             # Find the loser's bet amount (assuming 2-player game)
             bet_amount = game_data['bet_amount']  # Each player's bet
             commission_rate = 0.05  # 5% commission
             commission_amount = int(bet_amount * commission_rate)
-            winner_amount = bet_amount - commission_amount  # Winner gets 95% of loser's bet
+            winner_profit = bet_amount - commission_amount  # Winner gets 95% of loser's bet as profit
             
-            logger.info(f"💰 Loser's Bet: ₹{bet_amount}")
+            logger.info(f"💰 Each Player's Bet: ₹{bet_amount}")
             logger.info(f"💼 Commission (5%): ₹{commission_amount}")
-            logger.info(f"🎉 Winner Amount (95%): ₹{winner_amount}")
+            logger.info(f"🎉 Winner Profit (95% of loser's bet): ₹{winner_profit}")
             
-            # Update winner's balance
+            # First, process losers - deduct their bet amount
+            winner_usernames = [w['username'] for w in winners]
+            winner_user_ids = [w.get('user_id') for w in winners if w.get('user_id')]
+            
+            losers = []
+            for player in game_data['players']:
+                # Exclude if username matches
+                if player['username'] in winner_usernames:
+                    continue
+                # Exclude if user_id matches (prevents double-counting when username doesn't match)
+                if player.get('user_id') in winner_user_ids:
+                    continue
+                losers.append(player)
+            
+            logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
+            
+            # Deduct bet amount from each loser
+            for loser in losers:
+                username = loser['username']
+                user_id = loser.get('user_id')
+                
+                logger.info(f"🔍 Processing loser: username='{username}', user_id='{user_id}'")
+                
+                user_data = None
+                
+                # First, if we have a user_id (from text_mention entity), use it directly
+                if user_id and str(user_id).isdigit():
+                    user_data = users_collection.find_one({'user_id': int(user_id)})
+                    if user_data:
+                        logger.info(f"✅ Found loser by user_id: {user_id}")
+                    else:
+                        logger.warning(f"⚠️ User ID {user_id} not found in database")
+                
+                # If not found by user_id, try username-based lookup
+                if not user_data:
+                    # First try to find by username
+                    user_data = users_collection.find_one({'username': username})
+                    
+                    # If not found, try case-insensitive match
+                    if not user_data:
+                        user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    # If still not found, try first name match
+                    if not user_data:
+                        user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
+                    if user_data:
+                        logger.info(f"✅ Found loser by username: {username}")
+                    else:
+                        logger.warning(f"⚠️ Loser {username} not found in database")
+                
+                if user_data:
+                    # Deduct bet amount from loser's balance
+                    old_balance = user_data.get('balance', 0)
+                    new_balance = old_balance - bet_amount
+                    
+                    users_collection.update_one(
+                        {'_id': user_data['_id']},
+                        {'$set': {'balance': new_balance, 'last_updated': datetime.now()}}
+                    )
+                    
+                    # Record losing transaction
+                    transaction_data = {
+                        'user_id': user_data['user_id'],
+                        'type': 'bet_loss',
+                        'amount': -bet_amount,  # Negative because it's a deduction
+                        'description': f'Lost game {game_data["game_id"]} - bet deducted',
+                        'timestamp': datetime.now(),
+                        'game_id': game_data['game_id'],
+                        'old_balance': old_balance,
+                        'new_balance': new_balance
+                    }
+                    transactions_collection.insert_one(transaction_data)
+                    
+                    logger.info(f"💸 Deducted ₹{bet_amount} from loser {username} (₹{old_balance} → ₹{new_balance})")
+                    
+                    # Notify loser about the loss
+                    try:
+                        # Generate link to the original game table message
+                        table_link = self._generate_message_link(
+                            game_data['chat_id'], 
+                            int(game_data['admin_message_id'])
+                        )
+                        
+                        await self.application.bot.send_message(
+                            chat_id=user_data['user_id'],
+                            text=(
+                                f"😔 <b>You Lost!</b>\n\n"
+                                f"💰 <b>Amount Lost:</b> ₹{bet_amount}\n"
+                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
+                                f"Better luck next time! 🍀"
+                            ),
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
+                        )
+                        logger.info(f"✅ Loser notification sent to {user_data['user_id']}")
+                    except Exception as e:
+                        logger.error(f"❌ Could not notify loser {user_data['user_id']}: {e}")
+                else:
+                    logger.warning(f"⚠️ Loser {username} not found in database")
+            
+            # Now, update winner's balance - add only the profit (winner keeps their original bet)
             for winner in winners:
                 # CRITICAL FIX: Enhanced user resolution for both entity types
                 username = winner['username']
@@ -1258,8 +1211,9 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Winner {username} not found in database")
                 
                 if user_data:
-                    # Update balance
-                    new_balance = user_data.get('balance', 0) + winner_amount
+                    # Update balance - add only the profit (winner keeps their original bet)
+                    old_balance = user_data.get('balance', 0)
+                    new_balance = old_balance + winner_profit
                     
                     users_collection.update_one(
                         {'_id': user_data['_id']},
@@ -1270,12 +1224,16 @@ class LudoManagerBot:
                     transaction_data = {
                         'user_id': user_data['user_id'],
                         'type': 'win',
-                        'amount': winner_amount,
-                        'description': f'Won game {game_data["game_id"]} - 95% of opponent bet (₹{bet_amount}) minus 5% commission (₹{commission_amount})',
+                        'amount': winner_profit,
+                        'description': f'Won game {game_data["game_id"]} - profit from opponent bet (₹{bet_amount}) minus 5% commission (₹{commission_amount})',
                         'timestamp': datetime.now(),
-                        'game_id': game_data['game_id']
+                        'game_id': game_data['game_id'],
+                        'old_balance': old_balance,
+                        'new_balance': new_balance
                     }
                     transactions_collection.insert_one(transaction_data)
+                    
+                    logger.info(f"🎉 Added ₹{winner_profit} profit to winner {username} (₹{old_balance} → ₹{new_balance})")
                     
                     # Notify winner
                     try:
@@ -1288,8 +1246,10 @@ class LudoManagerBot:
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=(
-                                f"💰 <b>Amount Credited: ₹{winner_amount}</b>\n\n"
-                                f"📊 <b>Updated Balance: ₹{new_balance}</b>\n\n"
+                                f"🎉 <b>You Won!</b>\n\n"
+                                f"💰 <b>Profit Credited:</b> ₹{winner_profit}\n"
+                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"💡 <b>Your bet (₹{bet_amount}) was kept safe - only profit added!</b>\n\n"
                                 f"💸 Click to instant Withdraw(https://telegram.me/SOMYA_000)\n\n"
                                 f"🔍 <a href='{table_link}'>View Table</a> 👈"
                             ),
@@ -1309,91 +1269,12 @@ class LudoManagerBot:
                     '$set': {
                         'status': 'completed',
                         'winner': winners[0]['username'],
-                        'winner_amount': winner_amount,
+                        'winner_amount': winner_profit,
                         'admin_fee': commission_amount,
                         'completed_at': datetime.now()
                     }
                 }
             )
-            
-            # Process losers (all players except winners)
-            # Use both username and user_id for exclusion to prevent double-counting
-            winner_usernames = [w['username'] for w in winners]
-            winner_user_ids = [w.get('user_id') for w in winners if w.get('user_id')]
-            
-            losers = []
-            for player in game_data['players']:
-                # Exclude if username matches
-                if player['username'] in winner_usernames:
-                    continue
-                # Exclude if user_id matches (prevents double-counting when username doesn't match)
-                if player.get('user_id') in winner_user_ids:
-                    continue
-                losers.append(player)
-            
-            logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
-            
-            for loser in losers:
-                username = loser['username']
-                user_id = loser.get('user_id')  # This will be present for text_mention users
-                
-                logger.info(f"🔍 Processing loser: username='{username}', user_id='{user_id}'")
-                
-                user_data = None
-                
-                # First, if we have a user_id (from text_mention entity), use it directly
-                if user_id and str(user_id).isdigit():
-                    user_data = users_collection.find_one({'user_id': int(user_id)})
-                    if user_data:
-                        logger.info(f"✅ Found loser by user_id: {user_id}")
-                    else:
-                        logger.warning(f"⚠️ User ID {user_id} not found in database")
-                
-                # If not found by user_id, try username-based lookup
-                if not user_data:
-                    # First try to find by username
-                    user_data = users_collection.find_one({'username': username})
-                    
-                    # If not found, try case-insensitive match
-                    if not user_data:
-                        user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
-                    
-                    # If still not found, try first name match
-                    if not user_data:
-                        user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
-                    
-                    if user_data:
-                        logger.info(f"✅ Found loser by username: {username}")
-                    else:
-                        logger.warning(f"⚠️ Loser {username} not found in database")
-                
-                if user_data:
-                    # Loser doesn't get any money back (bet was already deducted)
-                    # Just notify them about the loss
-                    try:
-                        # Generate link to the original game table message
-                        table_link = self._generate_message_link(
-                            game_data['chat_id'], 
-                            int(game_data['admin_message_id'])
-                        )
-                        
-                        await self.application.bot.send_message(
-                            chat_id=user_data['user_id'],
-                            text=(
-                                f"😔 <b>You Lost!</b>\n\n"
-                                f"💰 <b>Amount Lost:</b> ₹{game_data['bet_amount']}\n"
-                                f"📊 <b>Current Balance:</b> ₹{user_data.get('balance', 0)}\n\n"
-                                f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
-                                f"Better luck next time! 🍀"
-                            ),
-                            parse_mode="HTML",
-                            disable_web_page_preview=True
-                        )
-                        logger.info(f"✅ Loser notification sent to {user_data['user_id']}")
-                    except Exception as e:
-                        logger.error(f"❌ Could not notify loser {user_data['user_id']}: {e}")
-                else:
-                    logger.warning(f"⚠️ Loser {username} not found in database")
             
             # Notify group
             try:
@@ -1404,8 +1285,9 @@ class LudoManagerBot:
                 group_message = (
                     f"🎉 *GAME COMPLETED!*\n\n"
                     f"🏆 *Winner:* {display_name}\n"
-                    f"💰 *Winnings:* ₹{winner_amount} (95% of bet)\n"
+                    f"💰 *Profit Earned:* ₹{winner_profit} (95% of opponent's bet)\n"
                     f"💼 *Commission:* ₹{commission_amount} (5%)\n"
+                    f"💡 *Winner kept their original bet \\(₹{bet_amount}\\) \\+ profit*\n"
                     f"🆔 *Game ID:* {game_data['game_id']}"
                 )
                 
@@ -2419,31 +2301,13 @@ class LudoManagerBot:
             for game in expired_games:
                 logger.info(f"⌛ Expiring game: {game['game_id']}")
                 
-                # Refund all players
+                # No need to refund players since no bets were deducted at game creation
+                # Just notify players that the game expired
                 for player in game['players']:
                     user_data = await self._resolve_user_mention(player['username'], None)
                     
                     if user_data:
-                        refund_amount = player['bet_amount']
-                        new_balance = user_data.get('balance', 0) + refund_amount
-                        
-                        users_collection.update_one(
-                            {'_id': user_data['_id']},
-                            {'$set': {'balance': new_balance, 'last_updated': current_time}}
-                        )
-                        
-                        # Record refund transaction
-                        transaction_data = {
-                            'user_id': user_data['user_id'],
-                            'type': 'refund',
-                            'amount': refund_amount,
-                            'description': f'Refund for expired game {game["game_id"]}',
-                            'timestamp': current_time,
-                            'game_id': game['game_id']
-                        }
-                        transactions_collection.insert_one(transaction_data)
-                        
-                        # Notify user
+                        # Notify user about game expiration
                         try:
                             # Generate link to the original game table message
                             table_link = self._generate_message_link(
@@ -2454,9 +2318,9 @@ class LudoManagerBot:
                             await context.bot.send_message(
                                 chat_id=user_data['user_id'],
                                 text=(
-                                    f"⌛ <b>Game Expired & Refunded</b>\n\n"
-                                    f"💰 <b>Refund Amount:</b> ₹{refund_amount}\n"
-                                    f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                    f"⌛ <b>Game Expired</b>\n\n"
+                                    f"💡 <b>Good news:</b> No money was deducted from your balance!\n"
+                                    f"📊 <b>Your Balance:</b> ₹{user_data.get('balance', 0)} (unchanged)\n\n"
                                     f"🔍 <a href='{table_link}'>View Game Table</a>"
                                 ),
                                 parse_mode="HTML",
@@ -2680,11 +2544,11 @@ class LudoManagerBot:
             await self.send_group_response(update, context, f"❌ Error cancelling game: {str(e)}")
 
     async def _cancel_and_refund_game(self, game_data: Dict, admin_id: int) -> bool:
-        """Cancel a game and refund all players' bet amounts"""
+        """Cancel a game (no refunds needed since no bets were deducted)"""
         try:
-            logger.info(f"🔄 Cancelling game {game_data['game_id']} and refunding players")
+            logger.info(f"🔄 Cancelling game {game_data['game_id']} and notifying players")
             
-            successful_refunds = []
+            successful_notifications = []
             failed_players = []
             
             for player in game_data['players']:
@@ -2700,39 +2564,11 @@ class LudoManagerBot:
                         failed_players.append(username)
                         continue
                     
-                    # Refund the bet amount
-                    old_balance = user_data.get('balance', 0)
-                    new_balance = old_balance + bet_amount
+                    # No need to refund since no bets were deducted - just notify
+                    logger.info(f"✅ Notifying {username} about game cancellation")
+                    successful_notifications.append(username)
                     
-                    # Update user balance
-                    users_collection.update_one(
-                        {'_id': user_data['_id']},
-                        {
-                            '$set': {
-                                'balance': new_balance,
-                                'last_updated': datetime.now()
-                            }
-                        }
-                    )
-                    
-                    # Record refund transaction
-                    transaction_data = {
-                        'user_id': user_data['user_id'],
-                        'type': 'refund',
-                        'amount': bet_amount,
-                        'description': f'Refund for cancelled game {game_data["game_id"]}',
-                        'timestamp': datetime.now(),
-                        'game_id': game_data['game_id'],
-                        'admin_id': admin_id,
-                        'old_balance': old_balance,
-                        'new_balance': new_balance
-                    }
-                    transactions_collection.insert_one(transaction_data)
-                    
-                    logger.info(f"✅ Refunded ₹{bet_amount} to {username} (₹{old_balance} → ₹{new_balance})")
-                    successful_refunds.append(username)
-                    
-                    # Notify player about game cancellation and refund
+                    # Notify player about game cancellation
                     try:
                         # Generate link to the original game table message
                         table_link = self._generate_message_link(
@@ -2743,9 +2579,9 @@ class LudoManagerBot:
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=(
-                                f"🚫 <b>Game Cancelled & Refunded</b>\n\n"
-                                f"💰 <b>Refund Amount:</b> ₹{bet_amount}\n"
-                                f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
+                                f"🚫 <b>Game Cancelled</b>\n\n"
+                                f"💡 <b>Good news:</b> No money was deducted from your balance!\n"
+                                f"📊 <b>Your Balance:</b> ₹{user_data.get('balance', 0)} (unchanged)\n\n"
                                 f"🔍 <a href='{table_link}'>View Game Table</a>"
                             ),
                             parse_mode="HTML",
@@ -2756,14 +2592,14 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Could not notify {username} about cancellation: {e}")
                         
                 except Exception as e:
-                    logger.error(f"❌ Error refunding {username}: {e}")
+                    logger.error(f"❌ Error notifying {username}: {e}")
                     failed_players.append(username)
             
             if failed_players:
-                logger.error(f"❌ Failed to refund players: {failed_players}")
+                logger.error(f"❌ Failed to notify players: {failed_players}")
                 return False
             
-            logger.info(f"✅ Successfully refunded all {len(successful_refunds)} players")
+            logger.info(f"✅ Successfully notified all {len(successful_notifications)} players")
             return True
             
         except Exception as e:
