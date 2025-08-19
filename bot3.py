@@ -520,6 +520,14 @@ class LudoManagerBot:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by user_id (exact): {winner_player}")
                                     break
+                            # If not found by user_id, also try username match from text_mention (case-insensitive)
+                            if not winner_player and winner_info.get('username'):
+                                target_username = winner_info.get('username', '').lower()
+                                for player in game_data['players']:
+                                    if player.get('username', '').lower() == target_username:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by username from text_mention (case-insensitive): {winner_player}")
+                                        break
                         
                         # Priority 2: Match by username (case-insensitive for @mention)
                         if not winner_player and winner_info.get('type') == 'mention':
@@ -531,7 +539,8 @@ class LudoManagerBot:
                                     break
                         
                         # Priority 3: Match by display_name (full match, then partial)
-                        if not winner_player:
+                        # IMPORTANT: Do NOT fall back to display_name if this was an @mention
+                        if not winner_player and winner_info.get('type') != 'mention':
                             target_display_name = winner_info.get('display_name', '').lower()
                             for player in game_data['players']:
                                 player_display_name = player.get('display_name', '').lower()
@@ -559,7 +568,14 @@ class LudoManagerBot:
                         else:
                             logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
                             logger.warning(f"⚠️ Available players: {[p.get('display_name', '') for p in game_data['players']]}")
-                            winners = [{'username': winner_info.get('display_name', 'Unknown'), 'bet_amount': game_data['bet_amount']}]
+                            # Do NOT overwrite username with display_name. Prefer the extracted username if available.
+                            extracted_username = winner_info.get('username')
+                            winners = [{
+                                'username': extracted_username if extracted_username else 'Unknown',
+                                'bet_amount': game_data['bet_amount'],
+                                'user_id': winner_info.get('user_id'),
+                                'display_name': winner_info.get('display_name', '')
+                            }]
                         
                         # Process the game result
                         await self.process_game_result_from_winner(game_data, winners, message)
@@ -625,7 +641,7 @@ class LudoManagerBot:
                                         return winner_info
                                 
                                 elif getattr(entity, 'type', '') == "mention":
-                                    # @username mention
+                                    # @username mention — match STRICTLY on username (case-insensitive). Do not overwrite username with display_name.
                                     mention_text = message_text[entity_start:entity_end]
                                     username = mention_text.lstrip('@')
                                     winner_info = {
@@ -637,10 +653,12 @@ class LudoManagerBot:
                                     return winner_info
                     
                     # Fallback: no entities, use the full text before ✅
+                    # IMPORTANT: Never overwrite username with display_name.
+                    # Only derive username if the text explicitly starts with an @mention.
                     winner_info = {
                         'type': 'fallback',
                         'display_name': winner_text,
-                        'username': winner_text.lstrip('@') if winner_text.startswith('@') else winner_text
+                        'username': winner_text.lstrip('@') if winner_text.startswith('@') else None
                     }
                     logger.info(f"✅ Winner found via fallback: {winner_info}")
                     return winner_info
@@ -1293,8 +1311,27 @@ class LudoManagerBot:
             )
             
             # Process losers (all players except winners)
-            winner_usernames = [w['username'] for w in winners]
-            losers = [player for player in game_data['players'] if player['username'] not in winner_usernames]
+            # Exclude by user_id when available, otherwise by username (case-insensitive)
+            winner_user_ids = set()
+            winner_usernames_ci = set()
+            for w in winners:
+                if w.get('user_id') is not None:
+                    try:
+                        winner_user_ids.add(int(w['user_id']))
+                    except Exception:
+                        pass
+                if w.get('username'):
+                    winner_usernames_ci.add(w['username'].lower())
+
+            losers = []
+            for player in game_data['players']:
+                player_user_id = player.get('user_id')
+                player_username_ci = player.get('username', '').lower()
+                if player_user_id is not None and player_user_id in winner_user_ids:
+                    continue
+                if player_username_ci in winner_usernames_ci:
+                    continue
+                losers.append(player)
             
             logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
             
@@ -1315,16 +1352,16 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ User ID {user_id} not found in database")
                 
                 # If not found by user_id, try username-based lookup
-                if not user_data:
+                if not user_data and username:
                     # First try to find by username
                     user_data = users_collection.find_one({'username': username})
                     
                     # If not found, try case-insensitive match
-                    if not user_data:
+                    if not user_data and isinstance(username, str):
                         user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                     
                     # If still not found, try first name match
-                    if not user_data:
+                    if not user_data and isinstance(username, str):
                         user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                     
                     if user_data:
