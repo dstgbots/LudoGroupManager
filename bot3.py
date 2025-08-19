@@ -165,12 +165,10 @@ class LudoManagerBot:
                             'last_name': user.last_name,
                             'display_name': display_name,
                             'is_admin': user.id in self.admin_ids,
-                            'last_active': datetime.now(),
-                            'balance': 0,
-                            'created_at': datetime.now()
+                            'last_active': datetime.now()
                         }
                         
-                        result = users_collection.insert_one(new_user_data)
+                        result = users_collection.insert_one({**new_user_data, 'balance': 0, 'created_at': datetime.now()})
                         new_user_data['_id'] = result.inserted_id
                         
                         logger.info(f"✅ Created new user from text_mention: {user.first_name} (ID: {user.id})")
@@ -226,8 +224,7 @@ class LudoManagerBot:
                                 'first_name': member.user.first_name,
                                 'last_name': member.user.last_name,
                                 'is_admin': member.user.id in self.admin_ids,
-                                'last_active': datetime.now(),
-                                'balance': 0
+                                'last_active': datetime.now()
                             }
                             
                             # Insert or update user
@@ -235,7 +232,7 @@ class LudoManagerBot:
                                 {'user_id': member.user.id},
                                 {
                                     '$set': user_data,
-                                    '$setOnInsert': {'created_at': datetime.now()}
+                                    '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}
                                 },
                                 upsert=True
                             )
@@ -246,7 +243,8 @@ class LudoManagerBot:
                     logger.warning(f"⚠️ Could not get group member info: {e}")
             
             # If still not found, check if it's a mention in the current message
-            if update and update.message and update.message.entities:
+            # Note: 'update' is not available in this scope; rely only on provided context/DB
+            if False:
                 for entity in update.message.entities:
                     if entity.type == "text_mention" and entity.user:
                         # Check if this is the user we're looking for
@@ -260,15 +258,13 @@ class LudoManagerBot:
                                 'first_name': entity.user.first_name,
                                 'last_name': entity.user.last_name,
                                 'is_admin': entity.user.id in self.admin_ids,
-                                'created_at': datetime.now(),
-                                'last_active': datetime.now(),
-                                'balance': 0
+                                'last_active': datetime.now()
                             }
                             
                             # Update or insert user
                             users_collection.update_one(
                                 {'user_id': entity.user.id},
-                                {'$set': user_data, '$setOnInsert': {'created_at': datetime.now()}},
+                                {'$set': user_data, '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}},
                                 upsert=True
                             )
                             
@@ -316,8 +312,7 @@ class LudoManagerBot:
                             'first_name': user.first_name,
                             'last_name': user.last_name,
                             'is_admin': user.id in self.admin_ids,
-                            'last_active': datetime.now(),
-                            'balance': 0
+                            'last_active': datetime.now()
                         }
                         
                         # Insert or update user
@@ -325,7 +320,7 @@ class LudoManagerBot:
                             {'user_id': user.id},
                             {
                                 '$set': user_data,
-                                '$setOnInsert': {'created_at': datetime.now()}
+                                '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}
                             },
                             upsert=True
                         )
@@ -708,8 +703,7 @@ class LudoManagerBot:
                                 'first_name': user.first_name,
                                 'last_name': user.last_name,
                                 'is_admin': user.id in self.admin_ids,
-                                'last_active': datetime.now(),
-                                'balance': 0
+                                'last_active': datetime.now()
                             }
                             
                             # Insert or update user
@@ -717,7 +711,7 @@ class LudoManagerBot:
                                 {'user_id': user.id},
                                 {
                                     '$set': user_data,
-                                    '$setOnInsert': {'created_at': datetime.now()}
+                                    '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}
                                 },
                                 upsert=True
                             )
@@ -1405,16 +1399,15 @@ class LudoManagerBot:
             return
         
         try:
-            # Create or update user in database
+            # Create or update user in database (do not overwrite existing balance)
             user_data = {
                 'user_id': user.id,
                 'username': user.username,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
                 'is_admin': user.id in self.admin_ids,
-                'last_active': datetime.now(),
-                'balance': 0
-                # REMOVED created_at from here - it's only set on insert
+                'last_active': datetime.now()
+                # balance is set only on insert to avoid overwriting existing balance
             }
             
             # Update or insert user
@@ -1422,7 +1415,7 @@ class LudoManagerBot:
                 {'user_id': user.id},
                 {
                     '$set': user_data,
-                    '$setOnInsert': {'created_at': datetime.now()}  # Only set on insert
+                    '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}  # Only set on insert
                 },
                 upsert=True
             )
