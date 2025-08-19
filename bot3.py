@@ -1245,13 +1245,12 @@ class LudoManagerBot:
                         
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
-                            text=(
-                                f"🎉 <b>You Won!</b>\n\n"
+                            text = (
                                 f"💰 <b>Profit Credited:</b> ₹{winner_profit}\n"
                                 f"📊 <b>Updated Balance:</b> ₹{new_balance}\n\n"
-                                f"💡 <b>Your bet (₹{bet_amount}) was kept safe - only profit added!</b>\n\n"
-                                f"💸 Click to instant Withdraw(https://telegram.me/SOMYA_000)\n\n"
-                                f"🔍 <a href='{table_link}'>View Table</a> 👈"
+                                f"💡 Your bet (₹{bet_amount}) was safe – only profit added!\n\n"
+                                f"💸 <a href='https://t.me/SOMYA_000'>Instant Withdraw</a>\n"
+                                f"🔍 <a href='{table_link}'>View Table</a>"
                             ),
                             parse_mode="HTML",
                             disable_web_page_preview=True
