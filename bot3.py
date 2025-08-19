@@ -1322,53 +1322,7 @@ class LudoManagerBot:
                 }
             )
             
-            # Notify group
-            try:
-                # Format winner name - use first name if available, fallback to username
-                winner_info = users_collection.find_one({'username': winners[0]['username']})
-                if winner_info and 'first_name' in winner_info:
-                    display_name = winner_info['first_name']
-                else:
-                    # Try to get display_name from the winner data
-                    display_name = winners[0].get('display_name', winners[0]['username'])
-                
-                # Escape special characters for MarkdownV2
-                escaped_display_name = display_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('~', '\\~').replace('`', '\\`').replace('>', '\\>').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('=', '\\=').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('!', '\\!')
-                
-                group_message = (
-                    f"🎉 *GAME COMPLETED\\!*\n\n"
-                    f"🏆 *Winner:* {escaped_display_name}\n"
-                    f"💰 *Profit Earned:* ₹{winner_profit} \\(95% of opponent's bet\\)\n"
-                    f"💼 *Commission:* ₹{commission_amount} \\(5%\\)\n"
-                    f"💡 *Winner kept their original bet \\(₹{bet_amount}\\) \\+ profit*\n"
-                    f"🆔 *Game ID:* {game_data['game_id']}"
-                )
-                
-                await self.application.bot.send_message(
-                    chat_id=int(self.group_id),
-                    text=group_message,
-                    parse_mode="MarkdownV2"
-                )
-                logger.info("✅ Completion message sent to group")
-            except Exception as e:
-                logger.error(f"❌ Could not send completion message to group: {e}")
-                # Fallback to plain text if MarkdownV2 fails
-                try:
-                    fallback_message = (
-                        f"🎉 GAME COMPLETED!\n\n"
-                        f"🏆 Winner: {display_name}\n"
-                        f"💰 Profit Earned: ₹{winner_profit} (95% of opponent's bet)\n"
-                        f"💼 Commission: ₹{commission_amount} (5%)\n"
-                        f"💡 Winner kept their original bet (₹{bet_amount}) + profit\n"
-                        f"🆔 Game ID: {game_data['game_id']}"
-                    )
-                    await self.application.bot.send_message(
-                        chat_id=int(self.group_id),
-                        text=fallback_message
-                    )
-                    logger.info("✅ Fallback completion message sent to group")
-                except Exception as fallback_e:
-                    logger.error(f"❌ Could not send fallback completion message: {fallback_e}")
+            # Group notification removed - no more "GAME COMPLETED" messages
             
             logger.info("✅ Game result processed successfully")
             
