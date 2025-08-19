@@ -875,6 +875,22 @@ class LudoManagerBot:
                 logger.info(f"🎮 Game created and stored with message ID: {update.message.message_id}")
                 logger.info(f"🔍 Current active games count: {len(self.active_games)}")
                 
+                # CRITICAL FIX: Deduct bet amounts from all players when game starts
+                bet_deduction_success = await self._deduct_player_bets(game_data, context)
+                
+                if not bet_deduction_success:
+                    # If bet deduction fails, remove the game and don't proceed
+                    del self.active_games[str(update.message.message_id)]
+                    logger.error(f"❌ Game {game_data['game_id']} cancelled due to bet deduction failure")
+                    return
+                
+                # Store game in database only after successful bet deduction
+                games_collection.insert_one(game_data)
+                logger.info(f"✅ Game {game_data['game_id']} created successfully with bets deducted")
+                
+                # Update balance sheet after bet deductions
+                await self.update_balance_sheet(context)
+                
                 # Removed noisy group confirmation message per user request
                 # await self._send_group_confirmation(context, update.effective_chat.id)
                 
@@ -1170,15 +1186,16 @@ class LudoManagerBot:
             logger.info(f"🎯 Processing game result for {game_data['game_id']}")
             logger.info(f"🏆 Winners: {[w['username'] for w in winners]}")
             
-            # Calculate total pot and commission
-            total_pot = game_data['total_amount']
-            commission_rate = 0.1  # 10% commission
-            commission_amount = int(total_pot * commission_rate)
-            winner_amount = total_pot - commission_amount
+            # NEW LOGIC: Winner gets 95% of loser's bet amount (5% commission)
+            # Find the loser's bet amount (assuming 2-player game)
+            bet_amount = game_data['bet_amount']  # Each player's bet
+            commission_rate = 0.05  # 5% commission
+            commission_amount = int(bet_amount * commission_rate)
+            winner_amount = bet_amount - commission_amount  # Winner gets 95% of loser's bet
             
-            logger.info(f"💰 Total Pot: ₹{total_pot}")
-            logger.info(f"💼 Commission : ₹{commission_amount}")
-            logger.info(f"🎉 Winner Amount: ₹{winner_amount}")
+            logger.info(f"💰 Loser's Bet: ₹{bet_amount}")
+            logger.info(f"💼 Commission (5%): ₹{commission_amount}")
+            logger.info(f"🎉 Winner Amount (95%): ₹{winner_amount}")
             
             # Update winner's balance
             for winner in winners:
@@ -1230,7 +1247,7 @@ class LudoManagerBot:
                         'user_id': user_data['user_id'],
                         'type': 'win',
                         'amount': winner_amount,
-                        'description': f'Won game {game_data["game_id"]} (Commission: ₹{commission_amount})',
+                        'description': f'Won game {game_data["game_id"]} - 95% of opponent bet (₹{bet_amount}) minus 5% commission (₹{commission_amount})',
                         'timestamp': datetime.now(),
                         'game_id': game_data['game_id']
                     }
@@ -1352,8 +1369,8 @@ class LudoManagerBot:
                 group_message = (
                     f"🎉 *GAME COMPLETED!*\n\n"
                     f"🏆 *Winner:* {display_name}\n"
-                    f"💰 *Winnings:* ₹{winner_amount}\n"
-                    f"💼 *Commission:* ₹{commission_amount}\n"
+                    f"💰 *Winnings:* ₹{winner_amount} (95% of bet)\n"
+                    f"💼 *Commission:* ₹{commission_amount} (5%)\n"
                     f"🆔 *Game ID:* {game_data['game_id']}"
                 )
                 
@@ -1367,6 +1384,12 @@ class LudoManagerBot:
                 logger.error(f"❌ Could not send completion message to group: {e}")
             
             logger.info("✅ Game result processed successfully")
+            
+            # Update balance sheet after game completion
+            try:
+                await self.update_balance_sheet(None)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not update balance sheet after game completion: {e}")
             
         except Exception as e:
             logger.error(f"❌ Error processing game result: {e}")
@@ -1940,9 +1963,28 @@ class LudoManagerBot:
                 await self.send_group_response(update, context, f"❌ User {username} not found in database!")
                 return
                 
-            # Update balance
+            # Update balance with negative balance handling
             old_balance = user_data.get('balance', 0)
-            new_balance = old_balance + amount
+            
+            # Handle negative balance properly
+            if old_balance < 0:
+                # User has debt, deposit should first fill the debt
+                debt_amount = abs(old_balance)
+                if amount <= debt_amount:
+                    # Deposit only partially fills the debt
+                    new_balance = old_balance + amount  # Still negative or zero
+                    debt_filled = amount
+                    remaining_deposit = 0
+                else:
+                    # Deposit fills all debt and adds to balance
+                    new_balance = amount - debt_amount  # Positive balance
+                    debt_filled = debt_amount
+                    remaining_deposit = amount - debt_amount
+            else:
+                # No debt, normal addition
+                new_balance = old_balance + amount
+                debt_filled = 0
+                remaining_deposit = amount
             
             users_collection.update_one(
                 {'user_id': user_data['user_id']},
@@ -1962,28 +2004,64 @@ class LudoManagerBot:
             }
             transactions_collection.insert_one(transaction_data)
             
-            # Prepare response (no @ for text_mention users)
+            # Prepare response with debt handling info
             user_identifier = username
             if username.startswith('@'):
                 user_identifier = username[1:]  # Remove @ if present
             
-            response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
-            response_msg += f"💰 Balance: ₹{old_balance} → ₹{new_balance}"
+            if old_balance < 0 and debt_filled > 0:
+                response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
+                if remaining_deposit > 0:
+                    response_msg += f"💸 Debt Cleared: ₹{debt_filled}\n"
+                    response_msg += f"💰 Added to Balance: ₹{remaining_deposit}\n"
+                    response_msg += f"📊 Final Balance: ₹{new_balance}"
+                else:
+                    response_msg += f"💸 Debt Reduced: ₹{debt_filled}\n"
+                    if new_balance < 0:
+                        response_msg += f"📊 Remaining Debt: ₹{abs(new_balance)}"
+                    else:
+                        response_msg += f"📊 Final Balance: ₹{new_balance}"
+            else:
+                response_msg = f"✅ Added ₹{amount} to {user_identifier}\n"
+                response_msg += f"💰 Balance: ₹{old_balance} → ₹{new_balance}"
             
             await self.send_group_response(update, context, response_msg)
             
             # Update balance sheet
             await self.update_balance_sheet(context)
             
-            # Notify user
+            # Notify user with debt handling info
             try:
+                if old_balance < 0 and debt_filled > 0:
+                    if remaining_deposit > 0:
+                        notification_text = (
+                            f"💰 <b>Deposit: ₹{amount}</b>\n\n"
+                            f"💸 <b>Debt Cleared:</b> ₹{debt_filled}\n"
+                            f"💰 <b>Added to Balance:</b> ₹{remaining_deposit}\n\n"
+                            f"<b>Final Balance:</b> ₹{new_balance}"
+                        )
+                    else:
+                        if new_balance < 0:
+                            notification_text = (
+                                f"💰 <b>Deposit: ₹{amount}</b>\n\n"
+                                f"💸 <b>Debt Reduced:</b> ₹{debt_filled}\n\n"
+                                f"<b>Remaining Debt:</b> ₹{abs(new_balance)}"
+                            )
+                        else:
+                            notification_text = (
+                                f"💰 <b>Deposit: ₹{amount}</b>\n\n"
+                                f"💸 <b>Debt Cleared:</b> ₹{debt_filled}\n\n"
+                                f"<b>Final Balance:</b> ₹{new_balance}"
+                            )
+                else:
+                    notification_text = (
+                        f"💰 <b>Deposit: ₹{amount}</b>\n\n"
+                        f"<b>Updated Balance:</b> ₹{new_balance}"
+                    )
+                
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
-                    text=(
-                        f"💰 <b>Deposit Balance Added</b>\n\n"
-                        f"₹{amount} your account by admin.\n\n"
-                        f"<b>Update balance:</b> ₹{new_balance}"
-                    ),
+                    text=notification_text,
                     parse_mode="HTML"
                 )
             except Exception as e:
