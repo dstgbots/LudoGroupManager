@@ -1453,12 +1453,12 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("testmentions", self.test_mentions_command))
         application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("balance", self.balance_command))
-        application.add_handler(CommandHandler("addbalance", self.addbalance_command))
-        application.add_handler(CommandHandler("withdraw", self.withdraw_command))
+        application.add_handler(CommandHandler("add", self.addbalance_command))
+        application.add_handler(CommandHandler("nil", self.withdraw_command))
         application.add_handler(CommandHandler("activegames", self.active_games_command))
         application.add_handler(CommandHandler("expiregames", self.expire_games_command))
-        application.add_handler(CommandHandler("setcommission", self.set_commission_command))
-        application.add_handler(CommandHandler("balancesheet", self.balance_sheet_command))
+        application.add_handler(CommandHandler("set", self.set_commission_command))
+        application.add_handler(CommandHandler("listpin", self.balance_sheet_command))
         application.add_handler(CommandHandler("stats", self.stats_command))
         application.add_handler(CommandHandler("cancel", self.cancel_table_command))
         application.add_handler(CommandHandler("testkformat", self.test_k_format_command))
@@ -1872,17 +1872,17 @@ class LudoManagerBot:
             "/testmentions - Test mention detection\n"
             "/myid - Show your Telegram ID and admin status\n"
             "/activegames - Show all currently running games\n"
-                            "/addbalance @username amount - Add balance to user\n"
-                "   Examples: /addbalance @Gopal 500\n"
-                "            /addbalance [Tap Gopal's contact] 500\n"
-                "/withdraw @username amount - Withdraw from user\n"
-                "   Examples: /withdraw @Gopal 500\n"
-                "            /withdraw [Tap Gopal's contact] 500\n"
-                "/setcommission @username percentage - Set custom commission rate\n"
-                "   Examples: /setcommission @Gopal 10\n"
-                "            /setcommission [Tap Gopal's contact] 10\n"
+                            "/add @username amount - Add balance to user\n"
+                "   Examples: /add @Gopal 500\n"
+                "            /add [Tap Gopal's contact] 500\n"
+                "/nil @username amount - Withdraw from user\n"
+                "   Examples: /nil @Gopal 500\n"
+                "            /nil [Tap Gopal's contact] 500\n"
+                "/set @username percentage - Set custom commission rate\n"
+                "   Examples: /set @Gopal 10\n"
+                "            /set [Tap Gopal's contact] 10\n"
              "/expiregames - Manually expire old games\n"
-             "/balancesheet - Create/update pinned balance sheet\n"
+             "/listpin - Create/update pinned balance sheet\n"
              "/stats - Show game and user statistics\n"
              "/cancel - Cancel a game table (reply to table message)"
         )
@@ -1932,7 +1932,7 @@ class LudoManagerBot:
                 await update.message.reply_text(error_msg)
 
     async def addbalance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /addbalance command"""
+        """Handle /add command"""
         # Debug logging for admin check
         user_id = update.effective_user.id
         username = update.effective_user.username or update.effective_user.first_name
@@ -1945,7 +1945,7 @@ class LudoManagerBot:
             return
         
         # Log message entities for debugging
-        logger.info(f"🔍 /addbalance command received")
+        logger.info(f"🔍 /add command received")
         logger.info(f"🔍 Message text: '{update.message.text}'")
         logger.info(f"🔍 Message entities: {update.message.entities}")
         
@@ -1970,7 +1970,7 @@ class LudoManagerBot:
             
         try:
             if len(context.args) < 2:
-                await self.send_group_response(update, context, "Usage: /addbalance @username amount OR /addbalance \"First Name\" amount")
+                await self.send_group_response(update, context, "Usage: /add @username amount OR /add \"First Name\" amount")
                 return
             
             # Initialize variables to ensure they're always defined
@@ -1989,7 +1989,7 @@ class LudoManagerBot:
                 # Fallback to parsing command arguments for names with spaces
                 logger.info("🔍 No user found in entities, trying command argument parsing")
                 
-                # Handle names with spaces: /addbalance "Gopal M" 500
+                # Handle names with spaces: /add "Gopal M" 500
                 # The last argument is always the amount
                 username_parts = context.args[:-1]  # Everything except amount
                 username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
@@ -2117,17 +2117,17 @@ class LudoManagerBot:
         except ValueError:
             await self.send_group_response(update, context, "❌ Invalid amount. Please enter a number.")
         except Exception as e:
-            logger.error(f"Error in addbalance command: {e}")
+            logger.error(f"Error in add command: {e}")
             await self.send_group_response(update, context, f"❌ Error processing balance addition: {str(e)}")
 
     async def withdraw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /withdraw command"""
+        """Handle /nil command"""
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
         
         # Log message entities for debugging
-        logger.info(f"🔍 /withdraw command received")
+        logger.info(f"🔍 /nil command received")
         logger.info(f"🔍 Message text: '{update.message.text}'")
         logger.info(f"🔍 Message entities: {update.message.entities}")
         
@@ -2152,7 +2152,7 @@ class LudoManagerBot:
             
         try:
             if len(context.args) < 2:
-                await self.send_group_response(update, context, "Usage: /withdraw @username amount OR /withdraw \"First Name\" amount")
+                await self.send_group_response(update, context, "Usage: /nil @username amount OR /nil \"First Name\" amount")
                 return
             
             # Initialize variables to ensure they're always defined
@@ -2171,7 +2171,7 @@ class LudoManagerBot:
                 # Fallback to parsing command arguments for names with spaces
                 logger.info("🔍 No user found in entities, trying command argument parsing")
                 
-                # Handle names with spaces: /withdraw "Gopal M" 500
+                # Handle names with spaces: /nil "Gopal M" 500
                 # The last argument is always the amount
                 username_parts = context.args[:-1]  # Everything except amount
                 username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
@@ -2268,7 +2268,7 @@ class LudoManagerBot:
         except ValueError:
             await self.send_group_response(update, context, "❌ Invalid amount. Please enter a number.")
         except Exception as e:
-            logger.error(f"Error in withdraw command: {e}")
+            logger.error(f"Error in nil command: {e}")
             await self.send_group_response(update, context, f"❌ Error processing withdrawal: {str(e)}")
 
     async def active_games_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2318,13 +2318,13 @@ class LudoManagerBot:
             await self.send_group_response(update, context, "❌ Error expiring games.")
 
     async def set_commission_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Set commission rate for a user"""
+        """Set commission rate for a user (/set command)"""
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
         
         # Log message entities for debugging
-        logger.info(f"🔍 /setcommission command received")
+        logger.info(f"🔍 /set command received")
         logger.info(f"🔍 Message text: '{update.message.text}'")
         logger.info(f"🔍 Message entities: {update.message.entities}")
         
@@ -2349,7 +2349,7 @@ class LudoManagerBot:
             
         try:
             if len(context.args) < 2:
-                await self.send_group_response(update, context, "Usage: /setcommission @username percentage OR /setcommission \"First Name\" percentage")
+                await self.send_group_response(update, context, "Usage: /set @username percentage OR /set \"First Name\" percentage")
                 return
             
             # Initialize variables to ensure they're always defined
@@ -2368,7 +2368,7 @@ class LudoManagerBot:
                 # Fallback to parsing command arguments for names with spaces
                 logger.info("🔍 No user found in entities, trying command argument parsing")
                 
-                # Handle names with spaces: /setcommission "Gopal M" 10
+                # Handle names with spaces: /set "Gopal M" 10
                 # The last argument is always the percentage
                 username_parts = context.args[:-1]  # Everything except percentage
                 username = ' '.join(username_parts).replace('@', '')  # Join with spaces and remove @
@@ -2411,7 +2411,7 @@ class LudoManagerBot:
         except ValueError:
             await self.send_group_response(update, context, "❌ Invalid rate. Please enter a number between 0 and 100 (e.g., 10 for 10%).")
         except Exception as e:
-            logger.error(f"Error in set_commission_command: {e}")
+            logger.error(f"Error in set command: {e}")
             await self.send_group_response(update, context, f"❌ Error setting commission rate: {str(e)}")
 
     async def expire_old_games(self, context: ContextTypes.DEFAULT_TYPE):
@@ -2545,7 +2545,7 @@ class LudoManagerBot:
             await query.edit_message_text(f"❌ Error processing winner: {str(e)}")
 
     async def balance_sheet_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /balancesheet command: delete old pinned, send fresh, and pin it"""
+        """Handle /listpin command: delete old pinned, send fresh, and pin it"""
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
@@ -3049,7 +3049,6 @@ class LudoManagerBot:
                     content += f"🙏 {account_name} = ₹{balance}\n"
             
             content += "\n" + "=" * 50 + "\n"
-            content += f"📊 Total Users: {len(users)}"
             
             # Add timestamp
             content += f"\n🕐 Last Updated: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
