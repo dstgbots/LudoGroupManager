@@ -532,7 +532,7 @@ class LudoManagerBot:
                             target_name = winner_info.get('username', '').lower()
                             logger.info(f"🔍 Fallback matching for: '{target_name}'")
                             
-                            # Try username match first
+                            # Try username match first (exact)
                             for player in game_data['players']:
                                 player_username = player.get('username', '').lower()
                                 if player_username == target_name:
@@ -554,6 +554,15 @@ class LudoManagerBot:
                                         winner_player = player
                                         logger.info(f"🎯 Winner found by fallback display_name (partial match): {winner_player}")
                                         break
+                            
+                            # If still not found, try fuzzy matching with first names
+                            if not winner_player:
+                                for player in game_data['players']:
+                                    player_first_name = player.get('display_name', '').split()[0].lower() if player.get('display_name') else ''
+                                    if player_first_name and target_name in player_first_name:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by fallback first name match: {winner_player}")
+                                        break
                         
                         if winner_player:
                             logger.info(f"✅ Found winner player: {winner_player}")
@@ -566,9 +575,33 @@ class LudoManagerBot:
                         else:
                             logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
                             logger.warning(f"⚠️ Available players: {[p.get('username', 'no_username') for p in game_data['players']]}")
-                            # Use the username from winner_info, not display_name
+                            
+                            # Try to find the winner in the database even if not in game players
                             fallback_username = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
-                            winners = [{'username': fallback_username, 'bet_amount': game_data['bet_amount']}]
+                            fallback_user_data = None
+                            
+                            # Try to find user by username, first name, or display name
+                            if fallback_username:
+                                fallback_user_data = users_collection.find_one({'username': fallback_username})
+                                if not fallback_user_data:
+                                    fallback_user_data = users_collection.find_one({'username': {'$regex': f'^{re.escape(fallback_username)}', '$options': 'i'}})
+                                if not fallback_user_data:
+                                    fallback_user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(fallback_username)}', '$options': 'i'}})
+                                if not fallback_user_data:
+                                    fallback_user_data = users_collection.find_one({'display_name': {'$regex': f'^{re.escape(fallback_username)}', '$options': 'i'}})
+                            
+                            if fallback_user_data:
+                                logger.info(f"✅ Found fallback winner in database: {fallback_user_data}")
+                                winners = [{
+                                    'username': fallback_user_data['username'],
+                                    'bet_amount': game_data['bet_amount'],
+                                    'user_id': fallback_user_data.get('user_id'),
+                                    'display_name': fallback_user_data.get('display_name', fallback_user_data.get('first_name', ''))
+                                }]
+                            else:
+                                # Last resort: use the fallback username
+                                logger.warning(f"⚠️ Winner not found in database, using fallback username: {fallback_username}")
+                                winners = [{'username': fallback_username, 'bet_amount': game_data['bet_amount']}]
                         
                         # Process the game result
                         await self.process_game_result_from_winner(game_data, winners, message)
@@ -606,6 +639,10 @@ class LudoManagerBot:
                     winner_text = match.group(1).strip()
                     logger.info(f"🔍 Winner text extracted: '{winner_text}'")
                     
+                    # Clean the winner text by removing any remaining checkmarks and extra characters
+                    cleaned_winner_text = re.sub(r'✅+', '', winner_text).strip()
+                    logger.info(f"🔍 Cleaned winner text: '{cleaned_winner_text}'")
+                    
                     # Check if this line has entities (text_mention or mention)
                     if message_entities:
                         # Find entities that overlap with this line
@@ -628,7 +665,7 @@ class LudoManagerBot:
                                             'type': 'text_mention',
                                             'user_id': user.id,
                                             'username': user.username or f"user_{user.id}",
-                                            'display_name': winner_text
+                                            'display_name': cleaned_winner_text
                                         }
                                         logger.info(f"✅ Winner found via text_mention: {winner_info}")
                                         return winner_info
@@ -640,26 +677,26 @@ class LudoManagerBot:
                                     winner_info = {
                                         'type': 'mention',
                                         'username': username,
-                                        'display_name': username  # For @mentions, keep username as display_name
+                                        'display_name': cleaned_winner_text  # Use cleaned text for display
                                     }
                                     logger.info(f"✅ Winner found via @mention: {winner_info}")
                                     return winner_info
                     
-                    # Fallback: no entities, parse the text before ✅
-                    if winner_text.startswith('@'):
+                    # Fallback: no entities, parse the cleaned text before ✅
+                    if cleaned_winner_text.startswith('@'):
                         # It's an @mention without entity data
-                        username = winner_text.lstrip('@')
+                        username = cleaned_winner_text.lstrip('@')
                         winner_info = {
                             'type': 'fallback_mention',
                             'username': username,
-                            'display_name': username
+                            'display_name': cleaned_winner_text
                         }
                     else:
-                        # Plain text fallback
+                        # Plain text fallback - use cleaned text
                         winner_info = {
                             'type': 'fallback',
-                            'username': winner_text,
-                            'display_name': winner_text
+                            'username': cleaned_winner_text,
+                            'display_name': cleaned_winner_text
                         }
                     logger.info(f"✅ Winner found via fallback: {winner_info}")
                     return winner_info
@@ -1112,6 +1149,14 @@ class LudoManagerBot:
                     if not user_data:
                         user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                     
+                    # If still not found, try partial first name match (for cases like "Mahli" matching "Mahli M")
+                    if not user_data:
+                        user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}', '$options': 'i'}})
+                    
+                    # If still not found, try display_name match
+                    if not user_data:
+                        user_data = users_collection.find_one({'display_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
                     if user_data:
                         logger.info(f"✅ Found loser by username: {username}")
                     else:
@@ -1199,6 +1244,14 @@ class LudoManagerBot:
                     if not user_data:
                         user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
                     
+                    # If still not found, try partial first name match (for cases like "Mahli" matching "Mahli M")
+                    if not user_data:
+                        user_data = users_collection.find_one({'first_name': {'$regex': f'^{re.escape(username)}', '$options': 'i'}})
+                    
+                    # If still not found, try display_name match
+                    if not user_data:
+                        user_data = users_collection.find_one({'display_name': {'$regex': f'^{re.escape(username)}$', '$options': 'i'}})
+                    
                     if user_data:
                         logger.info(f"✅ Found winner by username: {username}")
                     else:
@@ -1271,15 +1324,22 @@ class LudoManagerBot:
             
             # Notify group
             try:
-                # Format winner name - use first name if available
+                # Format winner name - use first name if available, fallback to username
                 winner_info = users_collection.find_one({'username': winners[0]['username']})
-                display_name = winner_info['first_name'] if winner_info and 'first_name' in winner_info else winners[0]['username']
+                if winner_info and 'first_name' in winner_info:
+                    display_name = winner_info['first_name']
+                else:
+                    # Try to get display_name from the winner data
+                    display_name = winners[0].get('display_name', winners[0]['username'])
+                
+                # Escape special characters for MarkdownV2
+                escaped_display_name = display_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('~', '\\~').replace('`', '\\`').replace('>', '\\>').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('=', '\\=').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('!', '\\!')
                 
                 group_message = (
-                    f"🎉 *GAME COMPLETED!*\n\n"
-                    f"🏆 *Winner:* {display_name}\n"
-                    f"💰 *Profit Earned:* ₹{winner_profit} (95% of opponent's bet)\n"
-                    f"💼 *Commission:* ₹{commission_amount} (5%)\n"
+                    f"🎉 *GAME COMPLETED\\!*\n\n"
+                    f"🏆 *Winner:* {escaped_display_name}\n"
+                    f"💰 *Profit Earned:* ₹{winner_profit} \\(95% of opponent's bet\\)\n"
+                    f"💼 *Commission:* ₹{commission_amount} \\(5%\\)\n"
                     f"💡 *Winner kept their original bet \\(₹{bet_amount}\\) \\+ profit*\n"
                     f"🆔 *Game ID:* {game_data['game_id']}"
                 )
@@ -1292,6 +1352,23 @@ class LudoManagerBot:
                 logger.info("✅ Completion message sent to group")
             except Exception as e:
                 logger.error(f"❌ Could not send completion message to group: {e}")
+                # Fallback to plain text if MarkdownV2 fails
+                try:
+                    fallback_message = (
+                        f"🎉 GAME COMPLETED!\n\n"
+                        f"🏆 Winner: {display_name}\n"
+                        f"💰 Profit Earned: ₹{winner_profit} (95% of opponent's bet)\n"
+                        f"💼 Commission: ₹{commission_amount} (5%)\n"
+                        f"💡 Winner kept their original bet (₹{bet_amount}) + profit\n"
+                        f"🆔 Game ID: {game_data['game_id']}"
+                    )
+                    await self.application.bot.send_message(
+                        chat_id=int(self.group_id),
+                        text=fallback_message
+                    )
+                    logger.info("✅ Fallback completion message sent to group")
+                except Exception as fallback_e:
+                    logger.error(f"❌ Could not send fallback completion message: {fallback_e}")
             
             logger.info("✅ Game result processed successfully")
             
