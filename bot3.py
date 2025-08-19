@@ -3031,7 +3031,7 @@ class LudoManagerBot:
                 return "#BALANCESHEET\n\n❌ No users found in database"
             
             # Header with game rules and info
-            content = "#BALANCESHEET GAme RuLes - ✅BET_RULE DEPOSIT=QR/NUMBER ✅SOMYA_000 MESSAGE\n"
+            content = "#BALANCESHEET GAme RuLes - ✅BET_RULE DEPOSIT=QR/NUMBER ✅ @SOMYA_000 MESSAGE\n"
             content += "=" * 50 + "\n\n"
             
             # Only show actual users from database with their current balances
@@ -3042,11 +3042,11 @@ class LudoManagerBot:
                 
                 # Format with appropriate emoji based on balance status
                 if balance > 0:
-                    content += f"💰 {account_name} = ₹{balance}\n"
+                    content += f"🙏 {account_name} = ₹{balance}\n"
                 elif balance < 0:
-                    content += f"💸 {account_name} = -₹{abs(balance)} (Debt)\n"
+                    content += f"🙏 {account_name} = -₹{abs(balance)} (Debt)\n"
                 else:
-                    content += f"🔺{account_name} = ₹{balance}\n"
+                    content += f"🙏 {account_name} = ₹{balance}\n"
             
             content += "\n" + "=" * 50 + "\n"
             content += f"📊 Total Users: {len(users)}"
