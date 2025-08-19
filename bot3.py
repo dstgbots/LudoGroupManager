@@ -531,7 +531,15 @@ class LudoManagerBot:
                                     break
                         
                         # Priority 3: Match by display_name (full match, then partial)
-                        if not winner_player:
+                        if not winner_player and winner_info.get('type') == 'fallback':
+                            # Try matching by username parsed from fallback text first
+                            target_username = winner_info.get('username', '').lower()
+                            if target_username:
+                                for player in game_data['players']:
+                                    if player.get('username', '').lower() == target_username:
+                                        winner_player = player
+                                        logger.info(f"🎯 Fallback winner found by username: {winner_player}")
+                                        break
                             target_display_name = winner_info.get('display_name', '').lower()
                             for player in game_data['players']:
                                 player_display_name = player.get('display_name', '').lower()
@@ -557,9 +565,14 @@ class LudoManagerBot:
                                 'display_name': winner_player.get('display_name', '')
                             }]
                         else:
-                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
-                            logger.warning(f"⚠️ Available players: {[p.get('display_name', '') for p in game_data['players']]}")
-                            winners = [{'username': winner_info.get('display_name', 'Unknown'), 'bet_amount': game_data['bet_amount']}]
+                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players. Falling back to username only.")
+                            logger.warning(f"⚠️ Available players: {[p.get('username', '') for p in game_data['players']]}" )
+                            winners = [{
+                                'username': winner_info.get('username', 'unknown'),
+                                'bet_amount': game_data['bet_amount'],
+                                'user_id': winner_info.get('user_id'),
+                                'display_name': winner_info.get('display_name', '')
+                            }]
                         
                         # Process the game result
                         await self.process_game_result_from_winner(game_data, winners, message)
@@ -1293,8 +1306,15 @@ class LudoManagerBot:
             )
             
             # Process losers (all players except winners)
-            winner_usernames = [w['username'] for w in winners]
-            losers = [player for player in game_data['players'] if player['username'] not in winner_usernames]
+            winner_usernames_ci = {w.get('username', '').lower() for w in winners}
+            winner_user_ids = {w.get('user_id') for w in winners if w.get('user_id')}
+            losers = []
+            for player in game_data['players']:
+                player_username_ci = player.get('username', '').lower()
+                player_user_id = player.get('user_id')
+                if (player_username_ci in winner_usernames_ci) or (player_user_id and player_user_id in winner_user_ids):
+                    continue
+                losers.append(player)
             
             logger.info(f"😔 Processing {len(losers)} losers: {[l['username'] for l in losers]}")
             
@@ -1450,13 +1470,13 @@ class LudoManagerBot:
                 return
             
             # Check if it contains ✅ marks (indicating winners)
-            winner = self._extract_winner_from_edited_message(update.edited_message.text)
+            winner_info = self._extract_winner_from_edited_message(update.edited_message.text, getattr(update.edited_message, 'entities', None))
             
-            if not winner:
+            if not winner_info:
                 logger.info("❌ No winners found in edited message")
                 return
             
-            logger.info(f"🏆 Winner extracted: {winner}")
+            logger.info(f"🏆 Winner extracted: {winner_info}")
             
             # Convert message ID to string for consistent matching
             msg_id_str = str(update.edited_message.message_id)
@@ -1466,8 +1486,52 @@ class LudoManagerBot:
                 logger.info(f"✅ Found matching game for edited message")
                 game_data = self.active_games.pop(msg_id_str)
                 
-                # Format winner as a single player for compatibility
-                winners = [{'username': winner, 'bet_amount': game_data['bet_amount']}]
+                # Find the actual winner player from the game data using the same rules as Pyrogram path
+                winner_player = None
+                # Priority 1: user_id for text_mention
+                if winner_info.get('type') == 'text_mention' and winner_info.get('user_id'):
+                    target_user_id = winner_info['user_id']
+                    for player in game_data['players']:
+                        if player.get('user_id') == target_user_id:
+                            winner_player = player
+                            break
+                # Priority 2: username for @mention (case-insensitive)
+                if not winner_player and winner_info.get('type') == 'mention':
+                    target_username = winner_info.get('username', '').lower()
+                    for player in game_data['players']:
+                        if player.get('username', '').lower() == target_username:
+                            winner_player = player
+                            break
+                # Priority 3: fallback only
+                if not winner_player and winner_info.get('type') == 'fallback':
+                    target_username = winner_info.get('username', '').lower()
+                    if target_username:
+                        for player in game_data['players']:
+                            if player.get('username', '').lower() == target_username:
+                                winner_player = player
+                                break
+                    if not winner_player:
+                        target_display_name = winner_info.get('display_name', '').lower()
+                        for player in game_data['players']:
+                            player_display_name = player.get('display_name', '').lower()
+                            if player_display_name == target_display_name or (target_display_name and target_display_name in player_display_name):
+                                winner_player = player
+                                break
+                
+                if winner_player:
+                    winners = [{
+                        'username': winner_player['username'],
+                        'bet_amount': winner_player['bet_amount'],
+                        'user_id': winner_player.get('user_id'),
+                        'display_name': winner_player.get('display_name', '')
+                    }]
+                else:
+                    winners = [{
+                        'username': winner_info.get('username', 'unknown'),
+                        'bet_amount': game_data['bet_amount'],
+                        'user_id': winner_info.get('user_id'),
+                        'display_name': winner_info.get('display_name', '')
+                    }]
                 
                 # Process the game result
                 await self.process_game_result_from_winner(game_data, winners, None)
