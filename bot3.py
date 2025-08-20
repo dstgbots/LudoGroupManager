@@ -3739,7 +3739,7 @@ async def main():
     BOT_TOKEN = "8205474950:AAG9aRfiLDC6-I0wwjf4vbNtU-zUTsPfwFI"
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
-    GROUP_ID = -1002849354155
+    GROUP_ID = -1002504305026
     ADMIN_IDS = [5948740136,739290618]
     
     print(f"🚀 Starting Ludo Manager Bot...")
