@@ -36,6 +36,7 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+from telegram.constants import ParseMode
 
 # Configure logging
 logging.basicConfig(
@@ -1112,10 +1113,10 @@ class LudoManagerBot:
                 rejection_message = "❌ **Invalid Table Format!**\n\nPlease send a table with exactly 2 different usernames and amount.\n\n**Supported formats:** 1000, 2000, 1k, 2k, 10k, 50k"
             
             # Send rejection message to group
-            message = await context.bot.send_message(
+            message =             await context.bot.send_message(
                 chat_id=chat_id,
                 text=rejection_message,
-                parse_mode="HTML"
+                parse_mode=ParseMode.HTML
             )
             
             # Auto-delete the rejection message after 5 seconds
@@ -1201,7 +1202,7 @@ class LudoManagerBot:
                 chat_id=admin_user_id,
                 text=html_message,
                 reply_markup=reply_markup,
-                parse_mode="html"  # CRITICAL: Use "html" instead of "markdown"
+                parse_mode=ParseMode.HTML  # CRITICAL: Use ParseMode.HTML instead of "html"
             )
             logger.info(f"✅ Winner selection sent to admin {admin_user_id}")
         except Exception as e:
@@ -1372,7 +1373,7 @@ class LudoManagerBot:
                                 f"🔍 <a href='{table_link}'>View Game Table</a>\n\n"
                                 f"Better luck next time! 🍀"
                             ),
-                            parse_mode="HTML",
+                            parse_mode=ParseMode.HTML,
                             disable_web_page_preview=True
                         )
                         logger.info(f"✅ Loser notification sent to {user_data['user_id']}")
@@ -1474,7 +1475,7 @@ class LudoManagerBot:
                                 f"💸 <a href='https://t.me/SOMYA_000'>Click to Instant Withdraw</a>\n\n"
                                 f"🔍 <a href='{table_link}'>View Table</a>"
                             ),
-                            parse_mode="HTML",
+                            parse_mode=ParseMode.HTML,
                             disable_web_page_preview=True
                         )
                         logger.info(f"✅ Winner notification sent to {user_data['user_id']}")
@@ -1665,7 +1666,7 @@ class LudoManagerBot:
             else:
                 await update.message.reply_text(
                     welcome_msg, 
-                    parse_mode="markdown",
+                    parse_mode=ParseMode.MARKDOWN,
                     reply_markup=keyboard
                 )
                 
@@ -1675,7 +1676,7 @@ class LudoManagerBot:
             if is_group:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
             
     async def debug_message_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /debugmessage command - show raw message data for debugging"""
@@ -1884,7 +1885,7 @@ class LudoManagerBot:
         if self.is_configured_group(update.effective_chat.id):
             await self.send_group_response(update, context, message)
         else:
-            await update.message.reply_text(message, parse_mode="HTML")
+            await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
     async def myid_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /myid command - shows user's Telegram ID"""
@@ -1905,7 +1906,7 @@ class LudoManagerBot:
         if self.is_configured_group(update.effective_chat.id):
             await self.send_group_response(update, context, message)
         else:
-            await update.message.reply_text(message, parse_mode="HTML")
+            await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
@@ -1992,7 +1993,7 @@ class LudoManagerBot:
         if is_group:
             await self.send_group_response(update, context, help_message)
         else:
-            await update.message.reply_text(help_message, parse_mode="markdown")
+            await update.message.reply_text(help_message, parse_mode=ParseMode.MARKDOWN)
 
     async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /balance command"""
@@ -2017,13 +2018,13 @@ class LudoManagerBot:
                 if is_group:
                     await self.send_group_response(update, context, balance_message)
                 else:
-                    await update.message.reply_text(balance_message, parse_mode="markdown")
+                    await update.message.reply_text(balance_message, parse_mode=ParseMode.MARKDOWN)
             else:
                 balance_message = "❌ **Account not found!** Please use `/start` to create your account."
                 if is_group:
                     await self.send_group_response(update, context, balance_message)
                 else:
-                    await update.message.reply_text(balance_message, parse_mode="markdown")
+                    await update.message.reply_text(balance_message, parse_mode=ParseMode.MARKDOWN)
                     
         except Exception as e:
             logger.error(f"❌ Error in balance command: {e}")
@@ -2031,7 +2032,7 @@ class LudoManagerBot:
             if is_group:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
     async def addbalance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /add command"""
@@ -2211,7 +2212,7 @@ class LudoManagerBot:
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
                     text=notification_text,
-                    parse_mode="HTML"
+                    parse_mode=ParseMode.HTML
                 )
             except Exception as e:
                 logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
@@ -2361,7 +2362,7 @@ class LudoManagerBot:
                 await context.bot.send_message(
                     chat_id=user_data['user_id'],
                     text=user_notification,
-                    parse_mode="HTML"
+                    parse_mode=ParseMode.HTML
                 )
                 logger.info(f"✅ Withdrawal notification sent to {username}")
             except Exception as e:
@@ -2555,7 +2556,7 @@ class LudoManagerBot:
                                     f"📊 <b>Your Balance:</b> ₹{user_data.get('balance', 0)} (unchanged)\n\n"
                                     f"🔍 <a href='{table_link}'>View Game Table</a>"
                                 ),
-                                parse_mode="HTML",
+                                parse_mode=ParseMode.HTML,
                                 disable_web_page_preview=True
                             )
                         except Exception as e:
@@ -2802,7 +2803,7 @@ class LudoManagerBot:
                                 f"📊 <b>Your Balance:</b> ₹{user_data.get('balance', 0)} (unchanged)\n\n"
                                 f"🔍 <a href='{table_link}'>View Game Table</a>"
                             ),
-                            parse_mode="HTML",
+                            parse_mode=ParseMode.HTML,
                             disable_web_page_preview=True
                         )
                         logger.info(f"✅ Cancellation notification sent to {username}")
@@ -3241,7 +3242,7 @@ class LudoManagerBot:
                         await self.application.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=notification_text,
-                            parse_mode="HTML",
+                            parse_mode=ParseMode.HTML,
                             disable_web_page_preview=True
                         )
                         logger.info(f"✅ Refund notification sent to {username}")
@@ -3318,7 +3319,7 @@ class LudoManagerBot:
                     await context.bot.send_message(
                         chat_id=admin_id,
                         text=startup_message,
-                        parse_mode="markdown"
+                        parse_mode=ParseMode.MARKDOWN
                     )
                     logger.info(f"✅ Startup notification sent to admin {admin_id}")
                 except Exception as e:
@@ -3345,7 +3346,7 @@ class LudoManagerBot:
                     await context.bot.send_message(
                         chat_id=admin_id,
                         text=shutdown_message,
-                        parse_mode="markdown"
+                        parse_mode=ParseMode.MARKDOWN
                     )
                     logger.info(f"✅ Shutdown notification sent to admin {admin_id}")
                 except Exception as e:
@@ -3417,7 +3418,7 @@ class LudoManagerBot:
                     await context.bot.send_message(
                         chat_id=admin_id,
                         text=health_message,
-                        parse_mode="markdown"
+                        parse_mode=ParseMode.MARKDOWN
                     )
                     logger.info(f"✅ Health check notification sent to admin {admin_id}")
                 except Exception as e:
@@ -3453,7 +3454,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, health_status)
             else:
-                await update.message.reply_text(health_status, parse_mode="markdown")
+                await update.message.reply_text(health_status, parse_mode=ParseMode.MARKDOWN)
                 
         except Exception as e:
             logger.error(f"❌ Error in health check command: {e}")
@@ -3461,7 +3462,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
     async def clear_all_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /cleardata command - clear all bot data (ADMIN ONLY)"""
@@ -3500,7 +3501,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, clear_message)
             else:
-                await update.message.reply_text(clear_message, parse_mode="markdown")
+                await update.message.reply_text(clear_message, parse_mode=ParseMode.MARKDOWN)
                 
             logger.info(f"✅ All data cleared by admin {update.effective_user.id}")
                 
@@ -3510,7 +3511,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
     async def clear_users_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /clearusers command - clear only user data"""
@@ -3533,7 +3534,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, clear_message)
             else:
-                await update.message.reply_text(clear_message, parse_mode="markdown")
+                await update.message.reply_text(clear_message, parse_mode=ParseMode.MARKDOWN)
                 
             logger.info(f"✅ User data cleared by admin {update.effective_user.id}")
                 
@@ -3543,7 +3544,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
     async def clear_games_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /cleargames command - clear only game data"""
@@ -3569,7 +3570,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, clear_message)
             else:
-                await update.message.reply_text(clear_message, parse_mode="markdown")
+                await update.message.reply_text(clear_message, parse_mode=ParseMode.MARKDOWN)
                 
             logger.info(f"✅ Game data cleared by admin {update.effective_user.id}")
                 
@@ -3579,7 +3580,7 @@ class LudoManagerBot:
             if update.effective_user.id not in self.admin_ids:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
     async def reset_bot_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /resetbot command - complete bot reset (ADMIN ONLY)"""
@@ -3623,7 +3624,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, reset_message)
             else:
-                await update.message.reply_text(reset_message, parse_mode="markdown")
+                await update.message.reply_text(reset_message, parse_mode=ParseMode.MARKDOWN)
                 
             logger.info(f"✅ Bot completely reset by admin {update.effective_user.id}")
                 
@@ -3633,7 +3634,7 @@ class LudoManagerBot:
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
+                await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
 async def main():
     """Main entry point"""
