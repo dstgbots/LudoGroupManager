@@ -398,13 +398,13 @@ class LudoManagerBot:
                 logger.info("✅ Game expiration monitor started (checks every 5 minutes)")
                 
                 # Schedule balance sheet update every 5 minutes
-                job_queue.run_repeating(
-                    callback=self.periodic_balance_sheet_update,
-                    interval=300,
-                    first=120,
-                    name="balance_sheet_update"
-                )
-                logger.info("✅ Balance sheet auto-update started (updates every 5 minutes)")
+                # job_queue.run_repeating(
+                #     callback=self.periodic_balance_sheet_update,
+                #     interval=300,
+                #     first=120,
+                #     name="balance_sheet_update"
+                # )
+                # logger.info("✅ Balance sheet auto-update started (updates every 5 minutes)")
             else:
                 logger.warning("⚠️ JobQueue not available. Game expiration and balance sheet monitoring disabled.")
             
@@ -2597,58 +2597,12 @@ class LudoManagerBot:
             await query.edit_message_text(f"❌ Error processing winner: {str(e)}")
 
     async def balance_sheet_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /listpin command: delete old pinned, send fresh, and pin it"""
+        """Handle /listpin command: temporarily disabled"""
         if update.effective_user.id not in self.admin_ids:
             await self.send_group_response(update, context, "❌ Only admins can use this command.")
             return
-        
-        try:
-            logger.info(f"📊 Balance sheet command received from admin {update.effective_user.id}")
-            
-            # If an old pinned balance sheet exists, try to unpin and delete it first
-            if self.pinned_balance_msg_id:
-                try:
-                    # Unpin if possible (ignore failures)
-                    try:
-                        await context.bot.unpin_chat_message(
-                            chat_id=int(self.group_id),
-                            message_id=self.pinned_balance_msg_id
-                        )
-                    except Exception as unpin_err:
-                        logger.warning(f"⚠️ Could not unpin old balance sheet: {unpin_err}")
-                    
-                    # Delete the old message (ignore failures)
-                    try:
-                        await context.bot.delete_message(
-                            chat_id=int(self.group_id),
-                            message_id=self.pinned_balance_msg_id
-                        )
-                        logger.info("🗑️ Deleted old pinned balance sheet message")
-                    except Exception as del_err:
-                        logger.warning(f"⚠️ Could not delete old balance sheet: {del_err}")
-                    
-                    # Clear stored ID in memory and DB
-                    self.pinned_balance_msg_id = None
-                    try:
-                        balance_sheet_collection.update_one(
-                            {'type': 'pinned_balance_sheet'},
-                            {'$set': {'message_id': None, 'updated_at': datetime.now()}},
-                            upsert=True
-                        )
-                    except Exception as db_err:
-                        logger.warning(f"⚠️ Could not clear pinned balance id in DB: {db_err}")
-                except Exception as cleanup_err:
-                    logger.warning(f"⚠️ Cleanup error before recreating balance sheet: {cleanup_err}")
-            
-            # Create and pin a fresh balance sheet
-            await self.create_new_balance_sheet(context)
-            
-            # Send confirmation message
-            await self.send_group_response(update, context, "✅ **Balance sheet refresh kar diya aur pin ho gaya!** 📌")
-            
-        except Exception as e:
-            logger.error(f"❌ Error in balance sheet command: {e}")
-            await self.send_group_response(update, context, f"❌ Error updating balance sheet: {str(e)}")
+        await self.send_group_response(update, context, "⏸️ Balance sheet feature is temporarily disabled.")
+        return
 
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /stats command to show game and user statistics"""
@@ -3112,116 +3066,14 @@ class LudoManagerBot:
             return "#BALANCESHEET - Error generating balance sheet"
 
     async def update_balance_sheet(self, context: ContextTypes.DEFAULT_TYPE = None):
-        """Update the pinned balance sheet message"""
-        try:
-            if not self.pinned_balance_msg_id:
-                logger.warning("⚠️ No pinned message ID found, creating new balance sheet")
-                await self.create_new_balance_sheet(context)
-                return
-            
-            # Generate new content
-            balance_sheet_content = await self.generate_balance_sheet_content()
-            
-            # Update the pinned message
-            if context:
-                await context.bot.edit_message_text(
-                    chat_id=int(self.group_id),
-                    message_id=self.pinned_balance_msg_id,
-                    text=balance_sheet_content
-                )
-            elif self.application:
-                await self.application.bot.edit_message_text(
-                    chat_id=int(self.group_id),
-                    message_id=self.pinned_balance_msg_id,
-                    text=balance_sheet_content
-                )
-            else:
-                logger.error("❌ No bot context available for updating balance sheet")
-                return
-            
-            logger.info("✅ Pinned balance sheet updated successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ Error updating pinned balance sheet: {e}")
-            logger.warning("⚠️ Attempting to create new balance sheet...")
-            await self.create_new_balance_sheet(context)
+        """Update the pinned balance sheet message (temporarily disabled)"""
+        logger.warning("⚠️ update_balance_sheet is temporarily disabled")
+        return
 
     async def create_new_balance_sheet(self, context: ContextTypes.DEFAULT_TYPE = None):
-        """Create and pin a new balance sheet message"""
-        try:
-            # Generate balance sheet content
-            balance_sheet_content = await self.generate_balance_sheet_content()
-            
-            # Send the message
-            if context:
-                message = await context.bot.send_message(
-                    chat_id=int(self.group_id),
-                    text=balance_sheet_content
-                )
-            elif self.application:
-                message = await self.application.bot.send_message(
-                    chat_id=int(self.group_id),
-                    text=balance_sheet_content
-                )
-            else:
-                logger.error("❌ No bot context available for creating balance sheet")
-                return
-            
-            logger.info(f"✅ Balance sheet message sent with ID: {message.message_id}")
-            
-            # Pin the message
-            try:
-                # First, attempt to unpin all just in case multiple pins exist
-                try:
-                    if context:
-                        await context.bot.unpin_all_chat_messages(chat_id=int(self.group_id))
-                    elif self.application:
-                        await self.application.bot.unpin_all_chat_messages(chat_id=int(self.group_id))
-                except Exception as unpin_all_err:
-                    logger.warning(f"⚠️ Could not unpin all messages (may not be necessary): {unpin_all_err}")
-                
-                if context:
-                    await context.bot.pin_chat_message(
-                        chat_id=int(self.group_id),
-                        message_id=message.message_id,
-                        disable_notification=True
-                    )
-                elif self.application:
-                    await self.application.bot.pin_chat_message(
-                        chat_id=int(self.group_id),
-                        message_id=message.message_id,
-                        disable_notification=True
-                    )
-                
-                logger.info("📌 Balance sheet pinned successfully")
-                
-                # Store the message ID
-                self.pinned_balance_msg_id = message.message_id
-                balance_sheet_collection.update_one(
-                    {'type': 'pinned_balance_sheet'},
-                    {'$set': {'message_id': message.message_id, 'updated_at': datetime.now()}},
-                    upsert=True
-                )
-                
-                logger.info(f"💾 Balance sheet ID stored: {message.message_id}")
-                
-            except Exception as pin_error:
-                logger.error(f"❌ Could not pin balance sheet: {pin_error}")
-                logger.error(f"📊 Bot might not have admin permissions in group {self.group_id}")
-                
-                # Still store the message ID even if pinning failed
-                self.pinned_balance_msg_id = message.message_id
-                balance_sheet_collection.update_one(
-                    {'type': 'pinned_balance_sheet'},
-                    {'$set': {'message_id': message.message_id, 'updated_at': datetime.now()}},
-                    upsert=True
-                )
-            
-            logger.info(f"✅ New balance sheet created with ID: {message.message_id}")
-            
-        except Exception as e:
-            logger.error(f"❌ Error creating balance sheet: {e}")
-            logger.error(f"🔍 Group ID: {self.group_id}")
+        """Create and pin a new balance sheet message (temporarily disabled)"""
+        logger.warning("⚠️ create_new_balance_sheet is temporarily disabled")
+        return
 
     async def _cancel_completed_game_with_refunds(self, game_data: Dict, admin_id: int) -> bool:
         """Cancel a completed game and refund all players with commission"""
