@@ -1533,7 +1533,7 @@ class LudoManagerBot:
         
         # In group, only admins can use start command
         if is_group and user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "❌ Only admins can use commands in the group. Please message me privately to start.")
+            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use commands in the group. Please message me privately to start.")
             return
         
         try:
@@ -1558,36 +1558,49 @@ class LudoManagerBot:
                 upsert=True
             )
             
-            # Send welcome message
+            # Create stylish developer button
+            developer_button = InlineKeyboardButton(
+                "👨‍💻 Developer",
+                url="https://telegram.me/Codewithjaadu"
+            )
+            keyboard = InlineKeyboardMarkup([[developer_button]])
+            
+            # Send welcome message with stylish formatting
             welcome_msg = (
-                "🎮 Welcome to Ludo Group Manager!\n\n"
-                "I'm your assistant for managing Ludo games in the group.\n\n"
-                "📌 *Features:*\n"
-                "• Automatic game table processing\n"
-                "• Winner selection and balance updates\n"
-                "• Commission management\n"
-                "• Balance tracking\n"
-                "• Game statistics\n\n"
-                "Use /help for more commands."
+                "🎮 **Welcome to Ludo Group Manager!** 🎮\n\n"
+                "🚀 I'm your intelligent assistant for managing Ludo games in the group.\n\n"
+                "✨ **Key Features:**\n"
+                "• 🎯 Automatic game table processing\n"
+                "• 🏆 Smart winner selection & balance updates\n"
+                "• 💰 Commission management system\n"
+                "• 📊 Real-time balance tracking\n"
+                "• 📈 Comprehensive game statistics\n"
+                "• 🔄 Automatic message editing\n\n"
+                "💡 Use `/help` for detailed command information.\n\n"
+                "🎯 **Ready to start managing your Ludo games!**"
             )
             
             if is_group:
                 await self.send_group_response(update, context, welcome_msg)
             else:
-                await update.message.reply_text(welcome_msg, parse_mode="markdown")
+                await update.message.reply_text(
+                    welcome_msg, 
+                    parse_mode="markdown",
+                    reply_markup=keyboard
+                )
                 
         except Exception as e:
             logger.error(f"❌ Error in start command: {e}")
-            error_msg = "❌ Sorry, there was an error setting up your account. Please try again later."
+            error_msg = "🚨 **Oops!** There was an error setting up your account. Please try again later."
             if is_group:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, parse_mode="markdown")
             
     async def debug_message_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /debugmessage command - show raw message data for debugging"""
         if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
             return
         
         try:
@@ -1658,7 +1671,7 @@ class LudoManagerBot:
     async def test_game_table_entities_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /testgametable command - test game table entity detection"""
         if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
             return
         
         try:
@@ -1732,7 +1745,7 @@ class LudoManagerBot:
     async def test_mentions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /testmentions command - test mention detection"""
         if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
             return
         
         try:
@@ -1822,41 +1835,43 @@ class LudoManagerBot:
         if is_group and not is_admin:
             # Non-admin in group gets limited help
             help_message = (
-                "🎮 Ludo Group Manager Bot\n\n"
-                "This bot helps manage Ludo games in the group.\n\n"
-                            "📌 *Available Commands:*\n"
-            "/ping - Check if bot is running\n"
-            "/start - Create your account\n"
-            "/balance - Check your balance\n"
-            "/myid - Show your Telegram ID\n"
-            "/help - Show this help message\n\n"
-                "⚠️ Note: Only admins can create games and manage balances."
+                "🎮 **Ludo Group Manager Bot** 🎮\n\n"
+                "This intelligent bot helps manage Ludo games in your group.\n\n"
+                "📋 **Available Commands:**\n"
+                "• `/ping` - Check if bot is running\n"
+                "• `/start` - Create your account\n"
+                "• `/balance` - Check your balance\n"
+                "• `/myid` - Show your Telegram ID\n"
+                "• `/help` - Show this help message\n\n"
+                "⚠️ **Note:** Only admins can create games and manage balances."
             )
             await self.send_group_response(update, context, help_message)
             return
         
-        # Admin help message
+        # Admin help message with stylish formatting
         help_message = (
-            "🎮 Ludo Group Manager Bot - ADMIN PANEL\n\n"
-            "📝 **NEW GAME PROCESS:**\n"
-            "• Send table directly with 'Full' keyword\n"
-            "• Bot automatically detects and processes\n"
-            "• Bot sends winner selection buttons to your DM\n"
-            "• Click winner button OR manually edit table to add ✅ for winners\n"
-            "• Bot automatically processes results\n\n"
-            "📝 **MANUAL EDITING (if buttons don't work):**\n"
-            "• Edit your table message in the group\n"
-            "• Add ✅ after the winner's username\n"
-            "• Example: @player1 ✅\n"
-            "• Bot will detect the edit and process results\n\n"
-            "Example table format:\n"
+            "🎮 **Ludo Group Manager Bot - ADMIN PANEL** 🎮\n\n"
+            "🚀 **NEW GAME PROCESS:**\n"
+            "• 📤 Send table directly with 'Full' keyword\n"
+            "• 🤖 Bot automatically detects and processes\n"
+            "• 📱 Bot sends winner selection buttons to your DM\n"
+            "• 🎯 Click winner button OR manually edit table to add ✅ for winners\n"
+            "• ⚡ Bot automatically processes results\n\n"
+            "✏️ **MANUAL EDITING (if buttons don't work):**\n"
+            "• 🔄 Edit your table message in the group\n"
+            "• ✅ Add ✅ after the winner's username\n"
+            "• 📝 Example: @player1 ✅\n"
+            "• 🤖 Bot will detect the edit and process results\n\n"
+            "📋 **Example table format:**\n"
+            "```\n"
             "@player1\n"
             "@player2\n"
-            "400 Full\n\n"
-            "**Amount formats supported:**\n"
+            "400 Full\n"
+            "```\n\n"
+            "💰 **Amount formats supported:**\n"
             "• Regular: 1000, 2000, 5000\n"
             "• K format: 1k, 2k, 5k, 10k, 50k\n\n"
-            "**User mentions supported:**\n"
+            "👥 **User mentions supported:**\n"
             "• Username: @username\n"
             "• First name: @FirstName\n"
             "• **Direct contact tap (no @ needed)** - Most reliable!\n"
@@ -1865,32 +1880,33 @@ class LudoManagerBot:
             "• Uses Telegram's native entity system\n"
             "• **NEW**: Automatic user creation from contact taps\n\n"
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
-            "📊 **ADMIN COMMANDS:**\n"
-            "/ping - Check if bot is running\n"
-            "/debugmessage - Show raw message data for debugging\n"
-            "/testgametable - Test game table entity detection\n"
-            "/testmentions - Test mention detection\n"
-            "/myid - Show your Telegram ID and admin status\n"
-            "/activegames - Show all currently running games\n"
-                            "/add @username amount - Add balance to user\n"
-                "   Examples: /add @Gopal 500\n"
-                "            /add [Tap Gopal's contact] 500\n"
-                "/nil @username amount - Withdraw from user\n"
-                "   Examples: /nil @Gopal 500\n"
-                "            /nil [Tap Gopal's contact] 500\n"
-                "/set @username percentage - Set custom commission rate\n"
-                "   Examples: /set @Gopal 10\n"
-                "            /set [Tap Gopal's contact] 10\n"
-             "/expiregames - Manually expire old games\n"
-             "/listpin - Create/update pinned balance sheet\n"
-             "/stats - Show game and user statistics\n"
-             "/cancel - Cancel a game table (reply to table message)"
+            "🛠️ **ADMIN COMMANDS:**\n"
+            "• `/ping` - Check if bot is running\n"
+            "• `/debugmessage` - Show raw message data for debugging\n"
+            "• `/testgametable` - Test game table entity detection\n"
+            "• `/testmentions` - Test mention detection\n"
+            "• `/myid` - Show your Telegram ID and admin status\n"
+            "• `/activegames` - Show all currently running games\n"
+            "• `/add @username amount` - Add balance to user\n"
+            "  Examples: `/add @Gopal 500`\n"
+            "           `/add [Tap Gopal's contact] 500`\n"
+            "• `/nil @username amount` - Withdraw from user\n"
+            "  Examples: `/nil @Gopal 500`\n"
+            "           `/nil [Tap Gopal's contact] 500`\n"
+            "• `/set @username percentage` - Set custom commission rate\n"
+            "  Examples: `/set @Gopal 10`\n"
+            "           `/set [Tap Gopal's contact] 10`\n"
+            "• `/expiregames` - Manually expire old games\n"
+            "• `/listpin` - Create/update pinned balance sheet\n"
+            "• `/stats` - Show game and user statistics\n"
+            "• `/cancel` - Cancel a game table (reply to table message)\n\n"
+            "🎯 **Ready to manage your Ludo games efficiently!**"
         )
         
         if is_group:
             await self.send_group_response(update, context, help_message)
         else:
-            await update.message.reply_text(help_message)
+            await update.message.reply_text(help_message, parse_mode="markdown")
 
     async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /balance command"""
@@ -1906,30 +1922,30 @@ class LudoManagerBot:
                 
                 # Format balance message based on whether it's positive, negative, or zero
                 if balance > 0:
-                    balance_message = f"💰 **Your Balance: ₹{balance}**"
+                    balance_message = f"💰 **Your Balance: ₹{balance}** 💰"
                 elif balance < 0:
-                    balance_message = f"💸 **Your Balance: -₹{abs(balance)} (Debt)**"
+                    balance_message = f"💸 **Your Balance: -₹{abs(balance)} (Debt)** 💸"
                 else:
-                    balance_message = f"💰 **Your Balance: ₹{balance}**"
+                    balance_message = f"💰 **Your Balance: ₹{balance}** 💰"
                 
                 if is_group:
                     await self.send_group_response(update, context, balance_message)
                 else:
-                    await update.message.reply_text(balance_message, parse_mode="HTML")
+                    await update.message.reply_text(balance_message, parse_mode="markdown")
             else:
-                balance_message = "❌ Account not found. Please use /start to create your account."
+                balance_message = "❌ **Account not found!** Please use `/start` to create your account."
                 if is_group:
                     await self.send_group_response(update, context, balance_message)
                 else:
-                    await update.message.reply_text(balance_message)
+                    await update.message.reply_text(balance_message, parse_mode="markdown")
                     
         except Exception as e:
             logger.error(f"❌ Error in balance command: {e}")
-            error_msg = "❌ Error retrieving balance. Please try again later."
+            error_msg = "❌ **Error retrieving balance.** Please try again later."
             if is_group:
                 await self.send_group_response(update, context, error_msg)
             else:
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, parse_mode="markdown")
 
     async def addbalance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /add command"""
@@ -1941,7 +1957,7 @@ class LudoManagerBot:
         logger.info(f"🔍 Admin check - Is admin: {user_id in self.admin_ids}")
         
         if user_id not in self.admin_ids:
-            await self.send_group_response(update, context, f"❌ Only admins can use this command. Your ID: {user_id}")
+            await self.send_group_response(update, context, f"🚫 **Access Denied!** Only admins can use this command. Your ID: {user_id}")
             return
         
         # Log message entities for debugging
@@ -2320,7 +2336,7 @@ class LudoManagerBot:
     async def set_commission_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set commission rate for a user (/set command)"""
         if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "❌ Only admins can use this command.")
+            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
             return
         
         # Log message entities for debugging
@@ -3044,7 +3060,7 @@ class LudoManagerBot:
                 if balance > 0:
                     content += f"🙏 {account_name} = ₹{balance}\n"
                 elif balance < 0:
-                    content += f"🙏 {account_name} = -₹{abs(balance)}\n"
+                    content += f"🙏 {account_name} = -₹{abs(balance)} (Debt)\n"
                 else:
                     content += f"🙏 {account_name} = ₹{balance}\n"
             
@@ -3353,7 +3369,7 @@ async def main():
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
     GROUP_ID = -1002849354155
-    ADMIN_IDS = [739290618]
+    ADMIN_IDS = [5948740136,739290618]
     
     print(f"🚀 Starting Ludo Manager Bot...")
     print(f"🔑 Bot Token: {BOT_TOKEN[:20]}...")
