@@ -1483,10 +1483,6 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("cancel", self.cancel_table_command))
         application.add_handler(CommandHandler("testkformat", self.test_k_format_command))
         application.add_handler(CommandHandler("health", self.health_check_command))
-        application.add_handler(CommandHandler("cleardata", self.clear_all_data_command))
-        application.add_handler(CommandHandler("clearusers", self.clear_users_command))
-        application.add_handler(CommandHandler("cleargames", self.clear_games_command))
-        application.add_handler(CommandHandler("resetbot", self.reset_bot_command))
         
         # Message handlers
         application.add_handler(MessageHandler(
@@ -1931,11 +1927,6 @@ class LudoManagerBot:
             "• `/listpin` - Create/update pinned balance sheet\n"
             "• `/stats` - Show game and user statistics\n"
             "• `/cancel` - Cancel a game table (reply to table message)\n\n"
-            "🗑️ **DATA CLEAR COMMANDS:**\n"
-            "• `/cleardata` - Clear ALL bot data (users, games, transactions)\n"
-            "• `/clearusers` - Clear only user data and balances\n"
-            "• `/cleargames` - Clear only game data\n"
-            "• `/resetbot` - Complete bot reset (factory settings)\n\n"
             "🎯 **Ready to manage your Ludo games efficiently!**"
         )
         
@@ -3556,178 +3547,6 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error in health check command: {e}")
             error_msg = "🚨 **Error checking bot health.** Please try again later."
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, error_msg)
-            else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
-
-    async def clear_all_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /cleardata command - clear all bot data (ADMIN ONLY)"""
-        if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
-            return
-        
-        try:
-            # Clear all collections
-            users_deleted = users_collection.delete_many({})
-            games_deleted = games_collection.delete_many({})
-            transactions_deleted = transactions_collection.delete_many({})
-            balance_sheet_deleted = balance_sheet_collection.delete_many({})
-            
-            # Clear active games from memory
-            self.active_games.clear()
-            
-            # Reset pinned message ID
-            self.pinned_balance_msg_id = None
-            
-            # Clear start time
-            if hasattr(self, '_start_time'):
-                self._start_time = datetime.now()
-            
-            clear_message = (
-                "🗑️ **Sara Data Clear Kar Diya!** 🗑️\n\n"
-                "✅ **Users deleted:** " + str(users_deleted.deleted_count) + "\n"
-                "✅ **Games deleted:** " + str(games_deleted.deleted_count) + "\n"
-                "✅ **Transactions deleted:** " + str(transactions_deleted.deleted_count) + "\n"
-                "✅ **Balance sheets deleted:** " + str(balance_sheet_deleted.deleted_count) + "\n\n"
-                "🔄 **Memory cleared:** Active games, pinned messages\n"
-                "⏰ **Start time reset:** " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n\n"
-                "🎯 **Bot fresh start ke liye ready hai!** 🚀"
-            )
-            
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, clear_message)
-            else:
-                await update.message.reply_text(clear_message, parse_mode="markdown")
-                
-            logger.info(f"✅ All data cleared by admin {update.effective_user.id}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error clearing data: {e}")
-            error_msg = "🚨 **Data clear karne me error aaya!** Please try again later."
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, error_msg)
-            else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
-
-    async def clear_users_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /clearusers command - clear only user data"""
-        if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
-            return
-        
-        try:
-            # Clear only users collection
-            users_deleted = users_collection.delete_many({})
-            
-            clear_message = (
-                "👥 **Users Data Clear Kar Diya!** 👥\n\n"
-                "✅ **Users deleted:** " + str(users_deleted.deleted_count) + "\n"
-                "🔄 **All user accounts removed**\n"
-                "💰 **Balances reset to 0**\n\n"
-                "🎯 **Users ko /start command use karna hoga**"
-            )
-            
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, clear_message)
-            else:
-                await update.message.reply_text(clear_message, parse_mode="markdown")
-                
-            logger.info(f"✅ User data cleared by admin {update.effective_user.id}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error clearing users: {e}")
-            error_msg = "🚨 **Users clear karne me error aaya!** Please try again later."
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, error_msg)
-            else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
-
-    async def clear_games_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /cleargames command - clear only game data"""
-        if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
-            return
-        
-        try:
-            # Clear only games collection
-            games_deleted = games_collection.delete_many({})
-            
-            # Clear active games from memory
-            self.active_games.clear()
-            
-            clear_message = (
-                "🎮 **Games Data Clear Kar Diya!** 🎮\n\n"
-                "✅ **Games deleted:** " + str(games_deleted.deleted_count) + "\n"
-                "🔄 **Active games memory cleared**\n"
-                "⏰ **All game timers reset**\n\n"
-                "🎯 **New games create kar sakte ho!**"
-            )
-            
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, clear_message)
-            else:
-                await update.message.reply_text(clear_message, parse_mode="markdown")
-                
-            logger.info(f"✅ Game data cleared by admin {update.effective_user.id}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error clearing games: {e}")
-            error_msg = "🚨 **Games clear karne me error aaya!** Please try again later."
-            if update.effective_user.id not in self.admin_ids:
-                await self.send_group_response(update, context, error_msg)
-            else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
-
-    async def reset_bot_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /resetbot command - complete bot reset (ADMIN ONLY)"""
-        if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
-            return
-        
-        try:
-            # Clear all collections
-            users_deleted = users_collection.delete_many({})
-            games_deleted = games_collection.delete_many({})
-            transactions_deleted = transactions_collection.delete_many({})
-            balance_sheet_deleted = balance_sheet_collection.delete_many({})
-            
-            # Clear active games from memory
-            self.active_games.clear()
-            
-            # Reset pinned message ID
-            self.pinned_balance_msg_id = None
-            
-            # Reset start time
-            self._start_time = datetime.now()
-            
-            # Clear any cached data
-            if hasattr(self, 'pinned_balance_msg_id'):
-                self.pinned_balance_msg_id = None
-            
-            reset_message = (
-                "🔄 **Bot Complete Reset Kar Diya!** 🔄\n\n"
-                "🗑️ **Sara data delete kar diya:**\n"
-                "✅ **Users:** " + str(users_deleted.deleted_count) + "\n"
-                "✅ **Games:** " + str(games_deleted.deleted_count) + "\n"
-                "✅ **Transactions:** " + str(transactions_deleted.deleted_count) + "\n"
-                "✅ **Balance sheets:** " + str(balance_sheet_deleted.deleted_count) + "\n\n"
-                "🔄 **Memory cleared:** Active games, pinned messages\n"
-                "⏰ **Start time reset:** " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n\n"
-                "🎯 **Bot bilkul fresh ho gaya hai!** 🚀\n"
-                "💡 **Sab users ko /start command use karna hoga**"
-            )
-            
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, reset_message)
-            else:
-                await update.message.reply_text(reset_message, parse_mode="markdown")
-                
-            logger.info(f"✅ Bot completely reset by admin {update.effective_user.id}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error resetting bot: {e}")
-            error_msg = "🚨 **Bot reset karne me error aaya!** Please try again later."
             if update.effective_chat.id == self.group_id:
                 await self.send_group_response(update, context, error_msg)
             else:
