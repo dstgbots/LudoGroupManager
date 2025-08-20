@@ -674,50 +674,48 @@ class LudoManagerBot:
                     cleaned_winner_text = re.sub(r'✅+', '', winner_text).strip()
                     logger.info(f"🔍 Cleaned winner text: '{cleaned_winner_text}'")
                     
-                    # Check if this line has entities (text_mention or mention)
                     if message_entities:
-                        # Find entities that overlap with this line
                         line_start = message_text.find(line)
                         line_end = line_start + len(line)
                         
                         for entity in message_entities:
                             entity_start = getattr(entity, 'offset', 0)
                             entity_end = entity_start + getattr(entity, 'length', 0)
+                            entity_text = message_text[entity_start:entity_end]
                             
-                            # Check if entity overlaps with the line containing ✅
                             if (entity_start < line_end and entity_end > line_start):
-                                logger.info(f"🔍 Found overlapping entity: type={getattr(entity, 'type', 'unknown')}")
+                                logger.info(f"🔍 Found overlapping entity: type={getattr(entity, 'type', 'unknown')} text='{entity_text}'")
                                 
+                                # --- Case 1: text_mention with user_id ---
                                 if getattr(entity, 'type', '') == "text_mention":
-                                    # Gold standard: we have the user ID
                                     user = getattr(entity, 'user', None)
                                     if user:
-                                        winner_info = {
-                                            'type': 'text_mention',
-                                            'user_id': user.id,
-                                            'username': user.username or f"user_{user.id}",
-                                            'display_name': cleaned_winner_text
-                                        }
-                                        logger.info(f"✅ Winner found via text_mention: {winner_info}")
-                                        logger.info(f"🔍 text_mention details - User ID: {user.id}, Username: {user.username}, First Name: {user.first_name}, Last Name: {user.last_name}")
-                                        logger.info(f"🔍 Display text from message: '{cleaned_winner_text}'")
-                                        return winner_info
+                                        # Even if entity text != winner_text, accept partial match
+                                        if entity_text.lower() in cleaned_winner_text.lower():
+                                            winner_info = {
+                                                'type': 'text_mention',
+                                                'user_id': user.id,
+                                                'username': user.username or f"user_{user.id}",
+                                                'display_name': cleaned_winner_text
+                                            }
+                                            logger.info(f"✅ Winner resolved via partial text_mention match: {winner_info}")
+                                            return winner_info
                                 
+                                # --- Case 2: @mention ---
                                 elif getattr(entity, 'type', '') == "mention":
-                                    # @username mention - extract username correctly
                                     mention_text = message_text[entity_start:entity_end]
                                     username = mention_text.lstrip('@')
-                                    winner_info = {
-                                        'type': 'mention',
-                                        'username': username,
-                                        'display_name': cleaned_winner_text  # Use cleaned text for display
-                                    }
-                                    logger.info(f"✅ Winner found via @mention: {winner_info}")
-                                    return winner_info
+                                    if username.lower() in cleaned_winner_text.lower():
+                                        winner_info = {
+                                            'type': 'mention',
+                                            'username': username,
+                                            'display_name': cleaned_winner_text
+                                        }
+                                        logger.info(f"✅ Winner resolved via @mention partial match: {winner_info}")
+                                        return winner_info
                     
-                    # Fallback: no entities, parse the cleaned text before ✅
+                    # --- Case 3: fallback matching ---
                     if cleaned_winner_text.startswith('@'):
-                        # It's an @mention without entity data
                         username = cleaned_winner_text.lstrip('@')
                         winner_info = {
                             'type': 'fallback_mention',
@@ -725,7 +723,6 @@ class LudoManagerBot:
                             'display_name': cleaned_winner_text
                         }
                     else:
-                        # Plain text fallback - use cleaned text
                         winner_info = {
                             'type': 'fallback',
                             'username': cleaned_winner_text,
@@ -736,10 +733,11 @@ class LudoManagerBot:
             
             logger.warning("❌ No winner found in message")
             return None
-            
+        
         except Exception as e:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
+
     
     async def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, message_entities: List = None) -> Optional[Dict]:
         """Extract game data from message text using message entities for user mentions"""
