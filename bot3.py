@@ -417,27 +417,7 @@ class LudoManagerBot:
                 drop_pending_updates=True
             )
             
-            # Set start time for uptime tracking
-            self._start_time = datetime.now()
-            
             logger.info("✅ Bot is running and listening for updates")
-            
-            # Notify all admins about bot startup
-            try:
-                await self.notify_all_admins_startup(application.context)
-                logger.info("✅ Startup notifications sent to all admins")
-            except Exception as e:
-                logger.error(f"❌ Error sending startup notifications: {e}")
-            
-            # Schedule periodic health check every 6 hours
-            if hasattr(application, 'job_queue') and application.job_queue:
-                application.job_queue.run_repeating(
-                    callback=self.periodic_health_check,
-                    interval=21600,  # 6 hours in seconds
-                    first=3600,      # First check after 1 hour
-                    name="health_check"
-                )
-                logger.info("✅ Periodic health check started (every 6 hours)")
             
             # Keep the bot running
             while True:
@@ -546,20 +526,6 @@ class LudoManagerBot:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by username (case-insensitive): {winner_player}")
                                     break
-                            
-                            # If not found by username and it's a @mention, check if @ was stripped correctly
-                            if not winner_player and winner_info.get('type') == 'mention':
-                                # Log available player data for debugging
-                                logger.warning(f"⚠️ @mention winner not found by username. Target: '{target_username}'")
-                                logger.warning(f"⚠️ Available players: {[{'username': p.get('username'), 'display_name': p.get('display_name')} for p in game_data['players']]}")
-                                
-                                # Try to match against display_name as well for @mentions
-                                for player in game_data['players']:
-                                    player_display_name = player.get('display_name', '').lower()
-                                    if player_display_name == target_username:
-                                        winner_player = player
-                                        logger.info(f"🎯 Winner found by display_name match for @mention: {winner_player}")
-                                        break
                         
                         # Priority 3: For fallback (plain text), try username match first, then display_name
                         if not winner_player and winner_info.get('type') == 'fallback':
@@ -607,11 +573,8 @@ class LudoManagerBot:
                                 'display_name': winner_player.get('display_name', '')
                             }]
                         else:
-                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players")
-                            logger.warning(f"⚠️ Winner info - type: {winner_info.get('type')}, username: {winner_info.get('username')}, display_name: {winner_info.get('display_name')}")
-                            logger.warning(f"⚠️ Available players in game:")
-                            for p in game_data['players']:
-                                logger.warning(f"   - username: {p.get('username')}, display_name: {p.get('display_name')}, user_id: {p.get('user_id')}")
+                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
+                            logger.warning(f"⚠️ Available players: {[p.get('username', 'no_username') for p in game_data['players']]}")
                             
                             # Try to find the winner in the database even if not in game players
                             fallback_username = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
@@ -714,7 +677,7 @@ class LudoManagerBot:
                                     winner_info = {
                                         'type': 'mention',
                                         'username': username,
-                                        'display_name': username  # For @mentions, display_name should match username
+                                        'display_name': cleaned_winner_text  # Use cleaned text for display
                                     }
                                     logger.info(f"✅ Winner found via @mention: {winner_info}")
                                     return winner_info
@@ -770,19 +733,12 @@ class LudoManagerBot:
                     elif hasattr(entity, 'type') and entity.type == "text_mention":
                         user = getattr(entity, 'user', None)
                         if user:
-                            # Create display name for consistency
-                            display_name = user.first_name or ''
-                            if user.last_name:
-                                display_name += f" {user.last_name}"
-                            display_name = display_name.strip()
-                            
                             # Create/update user entry automatically
                             user_data = {
                                 'user_id': user.id,
                                 'username': user.username or f"user_{user.id}",
                                 'first_name': user.first_name,
                                 'last_name': user.last_name,
-                                'display_name': display_name,  # Add display_name for consistency
                                 'is_admin': user.id in self.admin_ids,
                                 'last_active': datetime.now()
                             }
@@ -801,13 +757,12 @@ class LudoManagerBot:
                                 "user_id": user.id,
                                 "username": user.username or f"user_{user.id}",
                                 "first_name": user.first_name,
-                                "display_name": display_name,  # Include display_name in mentioned_users
                                 "is_mention": True,
                                 "entity_type": "text_mention",
                                 "telegram_user_id": user.id
                             })
                             logger.info(f"✅ Created/updated user from game table text_mention: {user.first_name} (ID: {user.id})")
-                            logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id}), display_name: {display_name}")
+                            logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id})")
                     
                     # Debug: log all entity types we encounter
                     else:
@@ -910,11 +865,10 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Duplicate user detected: {username} (ID: {user_id}) - skipping")
                         continue
                     
-                    # Ensure we always have both username and display_name
                     valid_players.append({
                         'user_id': user_id,
                         'username': username,
-                        'display_name': display_name or username,  # Fallback to username if no display_name
+                        'display_name': display_name,
                         'bet_amount': amount
                     })
                     seen_user_ids.add(user_id)
@@ -1508,7 +1462,6 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("stats", self.stats_command))
         application.add_handler(CommandHandler("cancel", self.cancel_table_command))
         application.add_handler(CommandHandler("testkformat", self.test_k_format_command))
-        application.add_handler(CommandHandler("health", self.health_check_command))
         
         # Message handlers
         application.add_handler(MessageHandler(
@@ -1610,12 +1563,7 @@ class LudoManagerBot:
                 "👨‍💻 Developer",
                 url="https://telegram.me/Codewithjaadu"
             )
-            #Admin button
-            admin_button = InlineKeyboardButton(
-                "🫅 Admin",
-                url="https://telegram.me/SOMYA_000"
-            )
-            keyboard = InlineKeyboardMarkup([[developer_button, admin_button]])
+            keyboard = InlineKeyboardMarkup([[developer_button]])
             
             # Send welcome message with stylish formatting
             welcome_msg = (
@@ -1934,7 +1882,6 @@ class LudoManagerBot:
             "⚠️ **IMPORTANT:** Only 2 players allowed per game. Same username cannot play against itself.\n\n"
             "🛠️ **ADMIN COMMANDS:**\n"
             "• `/ping` - Check if bot is running\n"
-            "• `/health` - Check detailed bot health status\n"
             "• `/debugmessage` - Show raw message data for debugging\n"
             "• `/testgametable` - Test game table entity detection\n"
             "• `/testmentions` - Test mention detection\n"
@@ -2351,10 +2298,10 @@ class LudoManagerBot:
             active_games = list(games_collection.find({'status': 'active'}))
             
             if not active_games:
-                await self.send_group_response(update, context, "ℹ️ **Koi active game nahi chal raha abhi** 🎮")
+                await self.send_group_response(update, context, "ℹ️ No active games running.")
                 return
                 
-            games_list = "🎮 **CHAL RAHE GAMES** 🎮\n\n"
+            games_list = "🎮 **ACTIVE GAMES**\n\n"
             
             for game in active_games:
                 players = ", ".join([f"@{p['username']}" for p in game['players']])
@@ -2362,10 +2309,10 @@ class LudoManagerBot:
                 time_left = game['expires_at'] - datetime.now()
                 minutes_left = max(0, int(time_left.total_seconds() / 60))
                 
-                games_list += f"🆔 **Game ID:** {game['game_id']}\n"
-                games_list += f"👥 **Players:** {players}\n"
-                games_list += f"💰 **Total Pot:** ₹{total_pot}\n"
-                games_list += f"⏰ **Time Left:** {minutes_left} minutes\n\n"
+                games_list += f"🆔 Game ID: {game['game_id']}\n"
+                games_list += f"👥 Players: {players}\n"
+                games_list += f"💰 Total Pot: ₹{total_pot}\n"
+                games_list += f"⏰ Time Left: {minutes_left} minutes\n\n"
                 
             await self.send_group_response(update, context, games_list)
             
@@ -2381,7 +2328,7 @@ class LudoManagerBot:
             
         try:
             await self.expire_old_games(context)
-            await self.send_group_response(update, context, "✅ **Purane games check kar liye aur expire kar diye!** ⏰")
+            await self.send_group_response(update, context, "✅ Checked and expired old games if any.")
         except Exception as e:
             logger.error(f"Error in expire_games_command: {e}")
             await self.send_group_response(update, context, "❌ Error expiring games.")
@@ -2605,7 +2552,7 @@ class LudoManagerBot:
             
             # Update the message
             await query.edit_message_text(
-                f"✅ **Winner select kar liya:** @{winner_username}\n"
+                f"✅ Winner selected: @{winner_username}\n"
                 "Processing game results..."
             )
             
@@ -2661,7 +2608,7 @@ class LudoManagerBot:
             await self.create_new_balance_sheet(context)
             
             # Send confirmation message
-            await self.send_group_response(update, context, "✅ **Balance sheet refresh kar diya aur pin ho gaya!** 📌")
+            await self.send_group_response(update, context, "✅ Balance sheet refreshed and pinned successfully!")
             
         except Exception as e:
             logger.error(f"❌ Error in balance sheet command: {e}")
@@ -2731,7 +2678,7 @@ class LudoManagerBot:
                         # Update balance sheet
                         await self.update_balance_sheet(context)
                         
-                        await self.send_group_response(update, context, f"✅ **Game cancel kar diya!** {game_data['game_id']} - sabko refund kar diya commission ke saath")
+                        await self.send_group_response(update, context, f"✅ Completed game {game_data['game_id']} has been cancelled and all players refunded with commission.")
                         logger.info(f"✅ Completed game {game_data['game_id']} cancelled and refunded successfully")
                     else:
                         await self.send_group_response(update, context, "❌ Failed to cancel the completed game. Please try again.")
@@ -2765,7 +2712,7 @@ class LudoManagerBot:
                 # Update balance sheet
                 await self.update_balance_sheet(context)
                 
-                await self.send_group_response(update, context, f"✅ **Active game cancel kar diya!** {game_data['game_id']} - sabko bata diya")
+                await self.send_group_response(update, context, f"✅ Active game {game_data['game_id']} has been cancelled and all players notified.")
                 logger.info(f"✅ Active game {game_data['game_id']} cancelled successfully")
             else:
                 await self.send_group_response(update, context, "❌ Failed to cancel the active game. Please try again.")
@@ -3415,176 +3362,13 @@ class LudoManagerBot:
         test_message = "🧪 **K Format Amount Detection Test**\n\n" + "\n".join(results)
         await self.send_group_response(update, context, test_message)
 
-    async def notify_all_admins_startup(self, context: ContextTypes.DEFAULT_TYPE):
-        """Notify all admins when bot starts up"""
-        try:
-            startup_message = (
-                "🚀 **Bot Startup Notification** 🚀\n\n"
-                "🎉 **Me aagaya vaaoas me ab marnejaarahau!** 🎉\n\n"
-                "🤖 **Ludo Group Manager Bot** is now online and ready!\n"
-                "⚡ All systems are running smoothly\n"
-                "🎮 Ready to manage your Ludo games\n\n"
-                "🕐 **Started at:** " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
-                "👑 **Total Admins:** " + str(len(self.admin_ids))
-            )
-            
-            for admin_id in self.admin_ids:
-                try:
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=startup_message,
-                        parse_mode="markdown"
-                    )
-                    logger.info(f"✅ Startup notification sent to admin {admin_id}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not send startup notification to admin {admin_id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Error sending startup notifications: {e}")
-
-    async def notify_all_admins_shutdown(self, context: ContextTypes.DEFAULT_TYPE):
-        """Notify all admins when bot shuts down"""
-        try:
-            shutdown_message = (
-                "🛑 **Bot Shutdown Notification** 🛑\n\n"
-                "😢 **Me ja raha hun vaaoas se, phir milenge!** 😢\n\n"
-                "🤖 **Ludo Group Manager Bot** is going offline\n"
-                "⏰ **Shutdown time:** " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n\n"
-                "💡 Bot will be back soon!\n"
-                "🎮 All active games will be preserved\n"
-                "📊 Balance sheet will be updated when back online"
-            )
-            
-            for admin_id in self.admin_ids:
-                try:
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=shutdown_message,
-                        parse_mode="markdown"
-                    )
-                    logger.info(f"✅ Shutdown notification sent to admin {admin_id}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not send shutdown notification to admin {admin_id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Error sending shutdown notifications: {e}")
-
-    async def _setup_signal_handlers(self):
-        """Set up signal handlers for graceful shutdown"""
-        import signal
-        
-        def signal_handler(signum, frame):
-            logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
-            asyncio.create_task(self._graceful_shutdown())
-        
-        # Register signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        logger.info("✅ Signal handlers registered for graceful shutdown")
-
-    async def _graceful_shutdown(self):
-        """Perform graceful shutdown with admin notifications"""
-        try:
-            logger.info("🔄 Starting graceful shutdown process...")
-            
-            # Notify all admins about shutdown
-            if hasattr(self, 'application') and self.application:
-                await self.notify_all_admins_shutdown(self.application.context)
-            
-            # Stop Pyrogram client if running
-            if self.pyro_client and self.pyro_client.is_connected:
-                await self.pyro_client.stop()
-                logger.info("✅ Pyrogram client stopped")
-            
-            # Close MongoDB connection
-            if 'client' in globals():
-                client.close()
-                logger.info("✅ MongoDB connection closed")
-            
-            logger.info("✅ Graceful shutdown completed")
-            
-        except Exception as e:
-            logger.error(f"❌ Error during graceful shutdown: {e}")
-        finally:
-            # Force exit after cleanup
-            os._exit(0)
-
-    async def periodic_health_check(self, context: ContextTypes.DEFAULT_TYPE):
-        """Send periodic health check notifications to all admins"""
-        try:
-            current_time = datetime.now()
-            uptime_hours = int((current_time - getattr(self, '_start_time', current_time)).total_seconds() / 3600)
-            
-            health_message = (
-                "💚 **Bot Health Check** 💚\n\n"
-                "🎯 **Me abhi bhi zinda hun vaaoas me!** 🎯\n\n"
-                "🤖 **Ludo Group Manager Bot** is running smoothly\n"
-                "⏰ **Uptime:** " + str(uptime_hours) + " hours\n"
-                "🎮 **Active Games:** " + str(len(self.active_games)) + "\n"
-                "👥 **Total Admins:** " + str(len(self.admin_ids)) + "\n"
-                "🕐 **Last Check:** " + current_time.strftime("%Y-%m-%d %H:%M:%S") + "\n\n"
-                "✨ Everything is working perfectly!\n"
-                "🚀 Ready to manage your Ludo games"
-            )
-            
-            for admin_id in self.admin_ids:
-                try:
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=health_message,
-                        parse_mode="markdown"
-                    )
-                    logger.info(f"✅ Health check notification sent to admin {admin_id}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not send health check to admin {admin_id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Error sending health check notifications: {e}")
-
-    async def health_check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /health command - manual health check"""
-        if update.effective_user.id not in self.admin_ids:
-            await self.send_group_response(update, context, "🚫 **Access Denied!** Only admins can use this command.")
-            return
-        
-        try:
-            current_time = datetime.now()
-            uptime_hours = int((current_time - getattr(self, '_start_time', current_time)).total_seconds() / 3600)
-            
-            health_status = (
-                "🏥 **Bot Health Status** 🏥\n\n"
-                "🎯 **Me abhi bhi zinda hun vaaoas me!** 🎯\n\n"
-                "🤖 **Bot Status:** ✅ Online & Running\n"
-                "⏰ **Uptime:** " + str(uptime_hours) + " hours\n"
-                "🎮 **Active Games:** " + str(len(self.active_games)) + "\n"
-                "👥 **Total Admins:** " + str(len(self.admin_ids)) + "\n"
-                "🕐 **Current Time:** " + current_time.strftime("%Y-%m-%d %H:%M:%S") + "\n"
-                "🔄 **Last Health Check:** " + current_time.strftime("%Y-%m-%d %H:%M:%S") + "\n\n"
-                "✨ **All Systems:** Operational\n"
-                "🚀 **Ready for:** Game Management\n"
-                "💚 **Bot is healthy and happy!**"
-            )
-            
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, health_status)
-            else:
-                await update.message.reply_text(health_status, parse_mode="markdown")
-                
-        except Exception as e:
-            logger.error(f"❌ Error in health check command: {e}")
-            error_msg = "🚨 **Error checking bot health.** Please try again later."
-            if update.effective_chat.id == self.group_id:
-                await self.send_group_response(update, context, error_msg)
-            else:
-                await update.message.reply_text(error_msg, parse_mode="markdown")
-
 async def main():
     """Main entry point"""
     # Configuration - replace with your actual values
     BOT_TOKEN = "8205474950:AAG9aRfiLDC6-I0wwjf4vbNtU-zUTsPfwFI"
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
-    GROUP_ID = -1002504305026
+    GROUP_ID = -1002849354155
     ADMIN_IDS = [5948740136,739290618]
     
     print(f"🚀 Starting Ludo Manager Bot...")
@@ -3596,40 +3380,7 @@ async def main():
     
     # Create and start the bot
     bot = LudoManagerBot(BOT_TOKEN, API_ID, API_HASH, GROUP_ID, ADMIN_IDS)
-    
-    # Set up signal handlers for graceful shutdown
-    bot._setup_signal_handlers()
-    
-    try:
-        await bot.start_bot()
-    except KeyboardInterrupt:
-        logger.info("🛑 Bot stopped by user (KeyboardInterrupt)")
-        await bot.notify_all_admins_shutdown(bot.application.context if hasattr(bot, 'application') else None)
-    except Exception as e:
-        logger.error(f"❌ Critical error: {e}")
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        # Try to notify admins about the error
-        try:
-            await bot.notify_all_admins_shutdown(bot.application.context if hasattr(bot, 'application') else None)
-        except:
-            pass
-    finally:
-        # Ensure cleanup happens
-        try:
-            if hasattr(bot, 'pyro_client') and bot.pyro_client and bot.pyro_client.is_connected:
-                await bot.pyro_client.stop()
-                logger.info("✅ Pyrogram client stopped")
-        except:
-            pass
-        
-        try:
-            if 'client' in globals():
-                client.close()
-                logger.info("✅ MongoDB connection closed")
-        except:
-            pass
-        
-        logger.info("✅ Bot shutdown completed")
+    await bot.start_bot()
 
 if __name__ == "__main__":
     try:
