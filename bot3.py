@@ -530,11 +530,22 @@ class LudoManagerBot:
                         # Priority 1: Match by user_id (exact match for text_mention)
                         if winner_info.get('type') == 'text_mention' and winner_info.get('user_id'):
                             target_user_id = winner_info['user_id']
+                            logger.info(f"🔍 Priority 1: Matching text_mention by user_id: {target_user_id}")
+                            logger.info(f"🔍 Available player user_ids: {[p.get('user_id') for p in game_data['players']]}")
+                            
                             for player in game_data['players']:
-                                if player.get('user_id') == target_user_id:
+                                player_user_id = player.get('user_id')
+                                logger.debug(f"🔍 Comparing target user_id {target_user_id} with player user_id {player_user_id}")
+                                if player_user_id == target_user_id:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by user_id (exact): {winner_player}")
                                     break
+                            
+                            if not winner_player:
+                                logger.warning(f"⚠️ text_mention user_id {target_user_id} not found in game players!")
+                                logger.warning(f"⚠️ This suggests a mismatch between game creation and winner detection")
+                        else:
+                            logger.info(f"🔍 Priority 1: Skipped - winner type: {winner_info.get('type')}, user_id: {winner_info.get('user_id')}")
                         
                         # Priority 2: Match by username (case-insensitive for @mention and fallback_mention)
                         if not winner_player and winner_info.get('type') in ['mention', 'fallback_mention']:
@@ -688,6 +699,8 @@ class LudoManagerBot:
                                             'display_name': cleaned_winner_text
                                         }
                                         logger.info(f"✅ Winner found via text_mention: {winner_info}")
+                                        logger.info(f"🔍 text_mention details - User ID: {user.id}, Username: {user.username}, First Name: {user.first_name}, Last Name: {user.last_name}")
+                                        logger.info(f"🔍 Display text from message: '{cleaned_winner_text}'")
                                         return winner_info
                                 
                                 elif getattr(entity, 'type', '') == "mention":
@@ -867,15 +880,21 @@ class LudoManagerBot:
             seen_usernames = set()
             
             for identifier in all_user_identifiers:
-                # First try to resolve the user
-                user_data = await self._resolve_user_mention(identifier, None)
-                if user_data:
-                    user_id = user_data['user_id']
-                    username = user_data['username']
-                    first_name = user_data.get('first_name', '')
-                    last_name = user_data.get('last_name', '')
+                # For text_mention users, we already have the user_id, so use it directly
+                text_mention_user = None
+                for mentioned_user in mentioned_users:
+                    if mentioned_user.get('user_id') == int(identifier) if identifier.isdigit() else False:
+                        text_mention_user = mentioned_user
+                        break
+                
+                if text_mention_user:
+                    # Use the text_mention user data directly (most reliable)
+                    user_id = text_mention_user['user_id']
+                    username = text_mention_user['username']
+                    first_name = text_mention_user.get('first_name', '')
+                    last_name = text_mention_user.get('last_name', '')
                     
-                    # Create display name (e.g., "Gopal M")
+                    # Create display name (e.g., "Mahli M")
                     display_name = f"{first_name}"
                     if last_name:
                         display_name += f" {last_name}"
@@ -893,7 +912,37 @@ class LudoManagerBot:
                     })
                     seen_user_ids.add(user_id)
                     seen_usernames.add(username)
-                    logger.info(f"✅ Valid player: {display_name} (ID: {user_id}, username: {username})")
+                    logger.info(f"✅ Valid text_mention player: {display_name} (ID: {user_id}, username: {username})")
+                    logger.debug(f"🔍 Stored player data: {valid_players[-1]}")
+                else:
+                    # Fallback to regular user resolution for non-text_mention users
+                    user_data = await self._resolve_user_mention(identifier, None)
+                    if user_data:
+                        user_id = user_data['user_id']
+                        username = user_data['username']
+                        first_name = user_data.get('first_name', '')
+                        last_name = user_data.get('last_name', '')
+                        
+                        # Create display name (e.g., "Gopal M")
+                        display_name = f"{first_name}"
+                        if last_name:
+                            display_name += f" {last_name}"
+                        
+                        # Check if we already have this user (by user_id or username)
+                        if user_id in seen_user_ids or username in seen_usernames:
+                            logger.warning(f"⚠️ Duplicate user detected: {username} (ID: {user_id}) - skipping")
+                            continue
+                        
+                        valid_players.append({
+                            'user_id': user_id,
+                            'username': username,
+                            'display_name': display_name,
+                            'bet_amount': amount
+                        })
+                        seen_user_ids.add(user_id)
+                        seen_usernames.add(username)
+                        logger.info(f"✅ Valid resolved player: {display_name} (ID: {user_id}, username: {username})")
+                        logger.debug(f"🔍 Stored player data: {valid_players[-1]}")
             
             if not valid_players or not amount:
                 logger.warning("❌ Invalid table format - missing usernames or amount")
@@ -948,6 +997,9 @@ class LudoManagerBot:
             }
             
             logger.info(f"🎮 Game data created: {game_data}")
+            logger.debug(f"🔍 Complete player list for debugging:")
+            for i, player in enumerate(valid_players):
+                logger.debug(f"   Player {i+1}: {player}")
             return game_data
         except Exception as e:
             logger.error(f"❌ Error extracting game data: {e}")
@@ -3591,7 +3643,7 @@ async def main():
     BOT_TOKEN = "8205474950:AAG9aRfiLDC6-I0wwjf4vbNtU-zUTsPfwFI"
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
-    GROUP_ID = -1002504305026
+    GROUP_ID = -1002849354155
     ADMIN_IDS = [5948740136,739290618]
     
     print(f"🚀 Starting Ludo Manager Bot...")
