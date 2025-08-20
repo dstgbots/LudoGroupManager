@@ -519,6 +519,9 @@ class LudoManagerBot:
                         # Priority 2: Match by username (case-insensitive for @mention and fallback_mention)
                         if not winner_player and winner_info.get('type') in ['mention', 'fallback_mention']:
                             target_username = winner_info.get('username', '').lower()
+                            # Safety: strip leading '@' if present in the parsed username
+                            if target_username.startswith('@'):
+                                target_username = target_username.lstrip('@')
                             logger.info(f"🔍 Matching @mention by username: '{target_username}'")
                             for player in game_data['players']:
                                 player_username = player.get('username', '').lower()
@@ -526,6 +529,15 @@ class LudoManagerBot:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by username (case-insensitive): {winner_player}")
                                     break
+                            # If still not found, try display_name full/partial match for mention-like inputs
+                            if not winner_player:
+                                logger.warning("⚠️ Winner not found via username, trying display_name partial match for mention")
+                                for player in game_data['players']:
+                                    player_display_name = player.get('display_name', '').lower()
+                                    if player_display_name == target_username or target_username in player_display_name:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by display_name match for @mention: {winner_player}")
+                                        break
                         
                         # Priority 3: For fallback (plain text), try username match first, then display_name
                         if not winner_player and winner_info.get('type') == 'fallback':
@@ -542,6 +554,7 @@ class LudoManagerBot:
                             
                             # If not found by username, try display_name match
                             if not winner_player:
+                                logger.warning("⚠️ Winner not found via username, trying display_name partial match")
                                 for player in game_data['players']:
                                     player_display_name = player.get('display_name', '').lower()
                                     # Full match first
@@ -677,20 +690,22 @@ class LudoManagerBot:
                                     winner_info = {
                                         'type': 'mention',
                                         'username': username,
-                                        'display_name': cleaned_winner_text  # Use cleaned text for display
+                                        'display_name': username  # Use username for consistency
                                     }
                                     logger.info(f"✅ Winner found via @mention: {winner_info}")
                                     return winner_info
                     
                     # Fallback: no entities, parse the cleaned text before ✅
                     if cleaned_winner_text.startswith('@'):
-                        # It's an @mention without entity data
+                        # It's an @mention without entity data - force treat as proper mention
                         username = cleaned_winner_text.lstrip('@')
                         winner_info = {
-                            'type': 'fallback_mention',
+                            'type': 'mention',
                             'username': username,
-                            'display_name': cleaned_winner_text
+                            'display_name': username
                         }
+                        logger.info(f"✅ Winner found via forced @mention: {winner_info}")
+                        return winner_info
                     else:
                         # Plain text fallback - use cleaned text
                         winner_info = {
