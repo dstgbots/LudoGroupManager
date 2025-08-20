@@ -1563,7 +1563,12 @@ class LudoManagerBot:
                 "👨‍💻 Developer",
                 url="https://telegram.me/Codewithjaadu"
             )
-            keyboard = InlineKeyboardMarkup([[developer_button]])
+            #Admin button
+            admin_button = InlineKeyboardButton(
+                "🫅 Admin",
+                url="https://telegram.me/SOMYA_000"
+            )
+            keyboard = InlineKeyboardMarkup([[developer_button, admin_button]])
             
             # Send welcome message with stylish formatting
             welcome_msg = (
