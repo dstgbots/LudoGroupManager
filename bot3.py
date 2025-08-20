@@ -541,7 +541,7 @@ class LudoManagerBot:
                         
                         # Priority 3: For fallback (plain text), try username match first, then display_name
                         if not winner_player and winner_info.get('type') == 'fallback':
-                            target_name = winner_info.get('username', '').lower()
+                            target_name = winner_info.get('username', '').lower().lstrip('@')
                             logger.info(f"🔍 Fallback matching for: '{target_name}'")
                             
                             # Try username match first (exact)
@@ -586,8 +586,10 @@ class LudoManagerBot:
                                 'display_name': winner_player.get('display_name', '')
                             }]
                         else:
-                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
-                            logger.warning(f"⚠️ Available players: {[p.get('username', 'no_username') for p in game_data['players']]}")
+                            target_debug = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
+                            logger.warning(f"⚠️ Winner not found in game players. target='{target_debug}'")
+                            logger.warning(f"⚠️ Available players usernames={[p.get('username', 'no_username') for p in game_data['players']]}")
+                            logger.warning(f"⚠️ Available players display_names={[p.get('display_name', 'no_display_name') for p in game_data['players']]}")
                             
                             # Try to find the winner in the database even if not in game players
                             fallback_username = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
