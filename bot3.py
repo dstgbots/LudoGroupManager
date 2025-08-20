@@ -519,6 +519,9 @@ class LudoManagerBot:
                         # Priority 2: Match by username (case-insensitive for @mention and fallback_mention)
                         if not winner_player and winner_info.get('type') in ['mention', 'fallback_mention']:
                             target_username = winner_info.get('username', '').lower()
+                            # Safety: strip leading '@' if present in the parsed username
+                            if target_username.startswith('@'):
+                                target_username = target_username.lstrip('@')
                             logger.info(f"🔍 Matching @mention by username: '{target_username}'")
                             for player in game_data['players']:
                                 player_username = player.get('username', '').lower()
@@ -526,10 +529,19 @@ class LudoManagerBot:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by username (case-insensitive): {winner_player}")
                                     break
+                            # If still not found, try display_name full/partial match for mention-like inputs
+                            if not winner_player:
+                                logger.warning("⚠️ Winner not found via username, trying display_name partial match for mention")
+                                for player in game_data['players']:
+                                    player_display_name = player.get('display_name', '').lower()
+                                    if player_display_name == target_username or target_username in player_display_name:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by display_name match for @mention: {winner_player}")
+                                        break
                         
                         # Priority 3: For fallback (plain text), try username match first, then display_name
                         if not winner_player and winner_info.get('type') == 'fallback':
-                            target_name = winner_info.get('username', '').lower()
+                            target_name = winner_info.get('username', '').lower().lstrip('@')
                             logger.info(f"🔍 Fallback matching for: '{target_name}'")
                             
                             # Try username match first (exact)
@@ -542,6 +554,7 @@ class LudoManagerBot:
                             
                             # If not found by username, try display_name match
                             if not winner_player:
+                                logger.warning("⚠️ Winner not found via username, trying display_name partial match")
                                 for player in game_data['players']:
                                     player_display_name = player.get('display_name', '').lower()
                                     # Full match first
@@ -573,8 +586,10 @@ class LudoManagerBot:
                                 'display_name': winner_player.get('display_name', '')
                             }]
                         else:
-                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
-                            logger.warning(f"⚠️ Available players: {[p.get('username', 'no_username') for p in game_data['players']]}")
+                            target_debug = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
+                            logger.warning(f"⚠️ Winner not found in game players. target='{target_debug}'")
+                            logger.warning(f"⚠️ Available players usernames={[p.get('username', 'no_username') for p in game_data['players']]}")
+                            logger.warning(f"⚠️ Available players display_names={[p.get('display_name', 'no_display_name') for p in game_data['players']]}")
                             
                             # Try to find the winner in the database even if not in game players
                             fallback_username = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
@@ -677,20 +692,22 @@ class LudoManagerBot:
                                     winner_info = {
                                         'type': 'mention',
                                         'username': username,
-                                        'display_name': cleaned_winner_text  # Use cleaned text for display
+                                        'display_name': username  # Use username for consistency
                                     }
                                     logger.info(f"✅ Winner found via @mention: {winner_info}")
                                     return winner_info
                     
                     # Fallback: no entities, parse the cleaned text before ✅
                     if cleaned_winner_text.startswith('@'):
-                        # It's an @mention without entity data
+                        # It's an @mention without entity data - force treat as proper mention
                         username = cleaned_winner_text.lstrip('@')
                         winner_info = {
-                            'type': 'fallback_mention',
+                            'type': 'mention',
                             'username': username,
-                            'display_name': cleaned_winner_text
+                            'display_name': username
                         }
+                        logger.info(f"✅ Winner found via forced @mention: {winner_info}")
+                        return winner_info
                     else:
                         # Plain text fallback - use cleaned text
                         winner_info = {
