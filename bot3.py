@@ -546,6 +546,20 @@ class LudoManagerBot:
                                     winner_player = player
                                     logger.info(f"🎯 Winner found by username (case-insensitive): {winner_player}")
                                     break
+                            
+                            # If not found by username and it's a @mention, check if @ was stripped correctly
+                            if not winner_player and winner_info.get('type') == 'mention':
+                                # Log available player data for debugging
+                                logger.warning(f"⚠️ @mention winner not found by username. Target: '{target_username}'")
+                                logger.warning(f"⚠️ Available players: {[{'username': p.get('username'), 'display_name': p.get('display_name')} for p in game_data['players']]}")
+                                
+                                # Try to match against display_name as well for @mentions
+                                for player in game_data['players']:
+                                    player_display_name = player.get('display_name', '').lower()
+                                    if player_display_name == target_username:
+                                        winner_player = player
+                                        logger.info(f"🎯 Winner found by display_name match for @mention: {winner_player}")
+                                        break
                         
                         # Priority 3: For fallback (plain text), try username match first, then display_name
                         if not winner_player and winner_info.get('type') == 'fallback':
@@ -593,8 +607,11 @@ class LudoManagerBot:
                                 'display_name': winner_player.get('display_name', '')
                             }]
                         else:
-                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players, using fallback")
-                            logger.warning(f"⚠️ Available players: {[p.get('username', 'no_username') for p in game_data['players']]}")
+                            logger.warning(f"⚠️ Winner '{winner_info}' not found in game players")
+                            logger.warning(f"⚠️ Winner info - type: {winner_info.get('type')}, username: {winner_info.get('username')}, display_name: {winner_info.get('display_name')}")
+                            logger.warning(f"⚠️ Available players in game:")
+                            for p in game_data['players']:
+                                logger.warning(f"   - username: {p.get('username')}, display_name: {p.get('display_name')}, user_id: {p.get('user_id')}")
                             
                             # Try to find the winner in the database even if not in game players
                             fallback_username = winner_info.get('username', winner_info.get('display_name', 'Unknown'))
@@ -697,7 +714,7 @@ class LudoManagerBot:
                                     winner_info = {
                                         'type': 'mention',
                                         'username': username,
-                                        'display_name': cleaned_winner_text  # Use cleaned text for display
+                                        'display_name': username  # For @mentions, display_name should match username
                                     }
                                     logger.info(f"✅ Winner found via @mention: {winner_info}")
                                     return winner_info
@@ -753,12 +770,19 @@ class LudoManagerBot:
                     elif hasattr(entity, 'type') and entity.type == "text_mention":
                         user = getattr(entity, 'user', None)
                         if user:
+                            # Create display name for consistency
+                            display_name = user.first_name or ''
+                            if user.last_name:
+                                display_name += f" {user.last_name}"
+                            display_name = display_name.strip()
+                            
                             # Create/update user entry automatically
                             user_data = {
                                 'user_id': user.id,
                                 'username': user.username or f"user_{user.id}",
                                 'first_name': user.first_name,
                                 'last_name': user.last_name,
+                                'display_name': display_name,  # Add display_name for consistency
                                 'is_admin': user.id in self.admin_ids,
                                 'last_active': datetime.now()
                             }
@@ -777,12 +801,13 @@ class LudoManagerBot:
                                 "user_id": user.id,
                                 "username": user.username or f"user_{user.id}",
                                 "first_name": user.first_name,
+                                "display_name": display_name,  # Include display_name in mentioned_users
                                 "is_mention": True,
                                 "entity_type": "text_mention",
                                 "telegram_user_id": user.id
                             })
                             logger.info(f"✅ Created/updated user from game table text_mention: {user.first_name} (ID: {user.id})")
-                            logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id})")
+                            logger.debug(f"Found text_mention entity: {user.first_name} (ID: {user.id}), display_name: {display_name}")
                     
                     # Debug: log all entity types we encounter
                     else:
@@ -885,10 +910,11 @@ class LudoManagerBot:
                         logger.warning(f"⚠️ Duplicate user detected: {username} (ID: {user_id}) - skipping")
                         continue
                     
+                    # Ensure we always have both username and display_name
                     valid_players.append({
                         'user_id': user_id,
                         'username': username,
-                        'display_name': display_name,
+                        'display_name': display_name or username,  # Fallback to username if no display_name
                         'bet_amount': amount
                     })
                     seen_user_ids.add(user_id)
