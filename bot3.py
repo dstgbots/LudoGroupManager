@@ -66,11 +66,11 @@ except (ConnectionFailure, ImportError) as e:
     print("⚠️ Running in limited mode without database persistence")
 
 class LudoManagerBot:
-    def __init__(self, bot_token: str, api_id: int, api_hash: str, group_id: int, admin_ids: List[int]):
+    def __init__(self, bot_token: str, api_id: int, api_hash: str, group_ids: List[str], admin_ids: List[int]):
         self.bot_token = bot_token
         self.api_id = api_id
         self.api_hash = api_hash
-        self.group_id = group_id
+        self.group_ids = group_ids  # Now supports multiple groups
         self.admin_ids = admin_ids
         
         # Active games storage - using string IDs for consistency
@@ -92,8 +92,8 @@ class LudoManagerBot:
             print("⚠️ Pyrogram not installed. Edited message handling will be limited.")
 
     def is_configured_group(self, chat_id: int) -> bool:
-        """Check if the message is from the configured group"""
-        return str(chat_id) == str(self.group_id)
+        """Check if the message is from any configured group"""
+        return str(chat_id) in self.group_ids
     
     def _generate_message_link(self, chat_id: int, message_id: int) -> str:
         """Generate a Telegram message link for the given chat and message"""
@@ -213,33 +213,38 @@ class LudoManagerBot:
             # If still not found, check if it's a mention in the current message
             if context and hasattr(context, 'bot'):
                 try:
-                    # Try to get chat member info (this works for users in the group)
-                    chat_members = await context.bot.get_chat_administrators(int(self.group_id))
-                    for member in chat_members:
-                        if (member.user.username and member.user.username.lower() == identifier.lower()) or \
-                           (member.user.first_name and member.user.first_name.lower() == identifier.lower()):
-                            # Create user entry if not exists
-                            user_data = {
-                                'user_id': member.user.id,
-                                'username': member.user.username or member.user.first_name,
-                                'first_name': member.user.first_name,
-                                'last_name': member.user.last_name,
-                                'is_admin': member.user.id in self.admin_ids,
-                                'last_active': datetime.now()
-                            }
-                            
-                            # Insert or update user
-                            users_collection.update_one(
-                                {'user_id': member.user.id},
-                                {
-                                    '$set': user_data,
-                                    '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}
-                                },
-                                upsert=True
-                            )
-                            
-                            logger.info(f"✅ Created/updated user from group member: {member.user.first_name}")
-                            return user_data
+                    # Try to get chat member info from all configured groups
+                    for group_id in self.group_ids:
+                        try:
+                            chat_members = await context.bot.get_chat_administrators(int(group_id))
+                            for member in chat_members:
+                                if (member.user.username and member.user.username.lower() == identifier.lower()) or \
+                                   (member.user.first_name and member.user.first_name.lower() == identifier.lower()):
+                                    # Create user entry if not exists
+                                    user_data = {
+                                        'user_id': member.user.id,
+                                        'username': member.user.username or member.user.first_name,
+                                        'first_name': member.user.first_name,
+                                        'last_name': member.user.last_name,
+                                        'is_admin': member.user.id in self.admin_ids,
+                                        'last_active': datetime.now()
+                                    }
+                                    
+                                    # Insert or update user
+                                    users_collection.update_one(
+                                        {'user_id': member.user.id},
+                                        {
+                                            '$set': user_data,
+                                            '$setOnInsert': {'created_at': datetime.now(), 'balance': 0}
+                                        },
+                                        upsert=True
+                                    )
+                                    
+                                    logger.info(f"✅ Created/updated user from group member: {member.user.first_name}")
+                                    return user_data
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not get group member info from group {group_id}: {e}")
+                            continue
                 except Exception as e:
                     logger.warning(f"⚠️ Could not get group member info: {e}")
             
@@ -485,20 +490,24 @@ class LudoManagerBot:
             return
             
         try:
+            # CRITICAL FIX: Support multiple groups
+            group_ids = [int(gid) for gid in self.group_ids]
+            
             @self.pyro_client.on_edited_message(
-                pyrogram_filters.chat(int(self.group_id)) & 
+                pyrogram_filters.chat(group_ids) & 
                 pyrogram_filters.user(self.admin_ids) & 
                 pyrogram_filters.text
             )
             async def on_admin_edit_message(client, message):
                 """Handle edited messages from admins in the group"""
                 try:
-                    logger.info(f"🔄 Received edited message: ID={message.id}")
+                    logger.info(f"🔄 Received edited message: ID={message.id} in group {message.chat.id}")
                     logger.info(f"📝 Message content: {message.text}")
                     
                     # Convert message ID to string for consistent matching (CRITICAL FIX)
                     msg_id_str = str(message.id)
                     logger.info(f"🆔 Message ID (string): {msg_id_str}")
+                    logger.info(f"🆔 Group ID: {message.chat.id}")
                     
                     # Log all active game IDs for debugging
                     active_game_ids = list(self.active_games.keys())
@@ -644,7 +653,9 @@ class LudoManagerBot:
                     logger.error(f"❌ Error handling edited message: {e}")
                     logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             
-            logger.info("✅ Pyrogram edited message handler registered")
+            logger.info(f"✅ Pyrogram edited message handler registered for groups: {group_ids}")
+            logger.info(f"🔍 Bot will now detect edited messages in all configured groups")
+            logger.info(f"🔍 Make sure the bot is an admin in all groups with proper permissions")
         except Exception as e:
             logger.error(f"❌ Failed to set up Pyrogram handlers: {e}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
@@ -1539,10 +1550,13 @@ class LudoManagerBot:
         application.add_handler(CommandHandler("cleargames", self.clear_games_command))
         application.add_handler(CommandHandler("resetbot", self.reset_bot_command))
         
+        # CRITICAL FIX: Support multiple groups in message handlers
+        group_filters = filters.Chat([int(gid) for gid in self.group_ids])
+        
         # Message handlers
         application.add_handler(MessageHandler(
             filters.TEXT & 
-            filters.Chat(int(self.group_id)) & 
+            group_filters & 
             filters.User(self.admin_ids),
             self.detect_and_process_game_table
         ))
@@ -1550,7 +1564,7 @@ class LudoManagerBot:
         # Edited message handler (for cases where Pyrogram isn't available)
         application.add_handler(MessageHandler(
             filters.TEXT & 
-            filters.Chat(int(self.group_id)) & 
+            group_filters & 
             filters.User(self.admin_ids) &
             filters.UpdateType.EDITED_MESSAGE,
             self.handle_edited_message
@@ -2536,31 +2550,32 @@ class LudoManagerBot:
                 
                 # No need to refund players since no bets were deducted at game creation
                 # Just notify players that the game expired
-                for player in game['players']:
-                    user_data = await self._resolve_user_mention(player['username'], None)
-                    
-                    if user_data:
-                        # Notify user about game expiration
-                        try:
-                            # Generate link to the original game table message
-                            table_link = self._generate_message_link(
-                                game['chat_id'], 
-                                int(game['admin_message_id'])
-                            )
-                            
-                            await context.bot.send_message(
-                                chat_id=user_data['user_id'],
-                                text=(
-                                    f"⌛ <b>Game Expired</b>\n\n"
-                                    f"💡 <b>Good news:</b> No money was deducted from your balance!\n"
-                                    f"📊 <b>Your Balance:</b> ₹{user_data.get('balance', 0)} (unchanged)\n\n"
-                                    f"🔍 <a href='{table_link}'>View Game Table</a>"
-                                ),
-                                parse_mode=ParseMode.HTML,
-                                disable_web_page_preview=True
-                            )
-                        except Exception as e:
-                            logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
+                # COMMENTED OUT: No need to send game expired messages to users
+                # for player in game['players']:
+                #     user_data = await self._resolve_user_mention(player['username'], None)
+                #     
+                #     if user_data:
+                #         # Notify user about game expiration
+                #         try:
+                #             # Generate link to the original game table message
+                #             table_link = self._generate_message_link(
+                #                 game['chat_id'], 
+                #                 int(game['admin_message_id'])
+                #             )
+                #             
+                #             await context.bot.send_message(
+                #                 chat_id=user_data['user_id'],
+                #                 text=(
+                #                     f"⌛ <b>Game Expired</b>\n\n"
+                #                     f"💡 <b>Good news:</b> No money was deducted from your balance!\n"
+                #                     f"📊 <b>Your Balance:</b> ₹{user_data.get('balance', 0)} (unchanged)\n\n"
+                #                     f"🔍 <a href='{table_link}'>View Game Table</a>"
+                #             ),
+                #             parse_mode=ParseMode.HTML,
+                #             disable_web_page_preview=True
+                #         )
+                #         except Exception as e:
+                #             logger.warning(f"Could not notify user {user_data['user_id']}: {e}")
                 
                 # Update game status
                 games_collection.update_one(
@@ -3451,7 +3466,7 @@ class LudoManagerBot:
                 "💚 **Bot is healthy and happy!**"
             )
             
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, health_status)
             else:
                 await update.message.reply_text(health_status, parse_mode=ParseMode.MARKDOWN)
@@ -3459,7 +3474,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error in health check command: {e}")
             error_msg = "🚨 **Error checking bot health.** Please try again later."
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, error_msg)
             else:
                 await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
@@ -3498,7 +3513,7 @@ class LudoManagerBot:
                 "🎯 **Bot fresh start ke liye ready hai!** 🚀"
             )
             
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, clear_message)
             else:
                 await update.message.reply_text(clear_message, parse_mode=ParseMode.MARKDOWN)
@@ -3508,7 +3523,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error clearing data: {e}")
             error_msg = "🚨 **Data clear karne me error aaya!** Please try again later."
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, error_msg)
             else:
                 await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
@@ -3531,7 +3546,7 @@ class LudoManagerBot:
                 "🎯 **Users ko /start command use karna hoga**"
             )
             
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, clear_message)
             else:
                 await update.message.reply_text(clear_message, parse_mode=ParseMode.MARKDOWN)
@@ -3541,7 +3556,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error clearing users: {e}")
             error_msg = "🚨 **Users clear karne me error aaya!** Please try again later."
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, error_msg)
             else:
                 await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
@@ -3567,7 +3582,7 @@ class LudoManagerBot:
                 "🎯 **New games create kar sakte ho!**"
             )
             
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, clear_message)
             else:
                 await update.message.reply_text(clear_message, parse_mode=ParseMode.MARKDOWN)
@@ -3577,7 +3592,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error clearing games: {e}")
             error_msg = "🚨 **Games clear karne me error aaya!** Please try again later."
-            if update.effective_user.id not in self.admin_ids:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, error_msg)
             else:
                 await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
@@ -3621,7 +3636,7 @@ class LudoManagerBot:
                 "💡 **Sab users ko /start command use karna hoga**"
             )
             
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, reset_message)
             else:
                 await update.message.reply_text(reset_message, parse_mode=ParseMode.MARKDOWN)
@@ -3631,7 +3646,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error resetting bot: {e}")
             error_msg = "🚨 **Bot reset karne me error aaya!** Please try again later."
-            if update.effective_chat.id == self.group_id:
+            if self.is_configured_group(update.effective_chat.id):
                 await self.send_group_response(update, context, error_msg)
             else:
                 await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
@@ -3642,18 +3657,19 @@ async def main():
     BOT_TOKEN = "8205474950:AAG9aRfiLDC6-I0wwjf4vbNtU-zUTsPfwFI"
     API_ID = 18274091
     API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
-    GROUP_ID = -1002504305026
+    # CRITICAL FIX: Support multiple groups
+    GROUP_IDS = ["-1002504305026", "-1002849354155"]  # Both group IDs as strings
     ADMIN_IDS = [5948740136,739290618]
     
     print(f"🚀 Starting Ludo Manager Bot...")
     print(f"🔑 Bot Token: {BOT_TOKEN[:20]}...")
     print(f"📱 API ID: {API_ID}")
     print(f"🔐 API Hash: {API_HASH[:20]}...")
-    print(f"👥 Group ID: {GROUP_ID}")
+    print(f"👥 Group IDs: {GROUP_IDS}")
     print(f"👑 Admin IDs: {ADMIN_IDS}")
     
     # Create and start the bot
-    bot = LudoManagerBot(BOT_TOKEN, API_ID, API_HASH, GROUP_ID, ADMIN_IDS)
+    bot = LudoManagerBot(BOT_TOKEN, API_ID, API_HASH, GROUP_IDS, ADMIN_IDS)
     
     # Set up signal handlers for graceful shutdown
     bot._setup_signal_handlers()
