@@ -17,6 +17,9 @@ active_games = {}
 # Your admin IDs
 ADMIN_IDS = [2109516065, 739290618]
 
+# Allowed group IDs
+GROUP_IDS = [-1002849354155, -1002504305026]
+
 
 def parse_table(text: str):
     """Parse table message and extract usernames + bet amount."""
@@ -43,6 +46,8 @@ async def handle_new_table(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new game table sent by admin."""
     if update.effective_user.id not in ADMIN_IDS:
         return
+    if update.effective_chat.id not in GROUP_IDS:
+        return
 
     message = update.effective_message
     players, bet_amount = parse_table(message.text or "")
@@ -60,6 +65,9 @@ async def handle_new_table(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle edited game table and detect winner."""
+    if update.effective_chat.id not in GROUP_IDS:
+        return
+
     message = update.effective_message
     key = (message.chat_id, message.message_id)
 
