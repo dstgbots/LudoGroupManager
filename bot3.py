@@ -666,82 +666,65 @@ class LudoManagerBot:
             logger.info(f"🔍 Extracting winner from message: {message_text}")
             logger.info(f"🔍 Message entities: {message_entities}")
             
-            # Split message into lines and find lines with ✅
             lines = message_text.split('\n')
-            winner_info = None
             
             for line_num, line in enumerate(lines):
-                if '✅' in line:
-                    logger.info(f"🔍 Found ✅ in line {line_num}: '{line}'")
+                if '✅' not in line:
+                    continue
+                logger.info(f"🔍 Found ✅ in line {line_num}: '{line}'")
+                
+                # Winner text before ✅
+                match = re.search(r'(.*)\s*✅', line)
+                if not match:
+                    continue
+                winner_text = match.group(1).strip()
+                cleaned_winner_text = re.sub(r'✅+', '', winner_text).strip()
+                logger.info(f"🔍 Cleaned winner text: '{cleaned_winner_text}'")
+                
+                # --- Entity-based resolution ---
+                if message_entities:
+                    line_start = message_text.find(line)
+                    line_end = line_start + len(line)
                     
-                    # Extract text before ✅
-                    match = re.search(r'(.*)\s*✅', line)
-                    if not match:
-                        continue
-                    
-                    winner_text = match.group(1).strip()
-                    logger.info(f"🔍 Winner text extracted: '{winner_text}'")
-                    
-                    # Clean the winner text by removing any remaining checkmarks and extra characters
-                    cleaned_winner_text = re.sub(r'✅+', '', winner_text).strip()
-                    logger.info(f"🔍 Cleaned winner text: '{cleaned_winner_text}'")
-                    
-                    if message_entities:
-                        line_start = message_text.find(line)
-                        line_end = line_start + len(line)
+                    for entity in message_entities:
+                        entity_start = getattr(entity, 'offset', 0)
+                        entity_end = entity_start + getattr(entity, 'length', 0)
+                        entity_text = message_text[entity_start:entity_end]
                         
-                        for entity in message_entities:
-                            entity_start = getattr(entity, 'offset', 0)
-                            entity_end = entity_start + getattr(entity, 'length', 0)
-                            entity_text = message_text[entity_start:entity_end]
+                        if (entity_start < line_end and entity_end > line_start):
+                            logger.info(f"🔍 Overlapping entity: type={getattr(entity, 'type', 'unknown')} text='{entity_text}'")
                             
-                            if (entity_start < line_end and entity_end > line_start):
-                                logger.info(f"🔍 Found overlapping entity: type={getattr(entity, 'type', 'unknown')} text='{entity_text}'")
-                                
-                                # --- Case 1: text_mention with user_id ---
-                                if getattr(entity, 'type', '') == "text_mention":
-                                    user = getattr(entity, 'user', None)
-                                    if user:
-                                        # Even if entity text != winner_text, accept partial match
-                                        if entity_text.lower() in cleaned_winner_text.lower():
-                                            winner_info = {
-                                                'type': 'text_mention',
-                                                'user_id': user.id,
-                                                'username': user.username or f"user_{user.id}",
-                                                'display_name': cleaned_winner_text
-                                            }
-                                            logger.info(f"✅ Winner resolved via partial text_mention match: {winner_info}")
-                                            return winner_info
-                                
-                                # --- Case 2: @mention ---
-                                elif getattr(entity, 'type', '') == "mention":
-                                    mention_text = message_text[entity_start:entity_end]
-                                    username = mention_text.lstrip('@')
-                                    if username.lower() in cleaned_winner_text.lower():
-                                        winner_info = {
-                                            'type': 'mention',
-                                            'username': username,
-                                            'display_name': cleaned_winner_text
-                                        }
-                                        logger.info(f"✅ Winner resolved via @mention partial match: {winner_info}")
-                                        return winner_info
-                    
-                    # --- Case 3: fallback matching ---
-                    if cleaned_winner_text.startswith('@'):
-                        username = cleaned_winner_text.lstrip('@')
-                        winner_info = {
-                            'type': 'fallback_mention',
-                            'username': username,
-                            'display_name': cleaned_winner_text
-                        }
-                    else:
-                        winner_info = {
-                            'type': 'fallback',
-                            'username': cleaned_winner_text,
-                            'display_name': cleaned_winner_text
-                        }
-                    logger.info(f"✅ Winner found via fallback: {winner_info}")
-                    return winner_info
+                            if getattr(entity, 'type', '') == "text_mention" and getattr(entity, 'user', None):
+                                user = entity.user
+                                # ✅ Always trust text_mention user ID, even if text differs
+                                return {
+                                    'type': 'text_mention',
+                                    'user_id': user.id,
+                                    'username': user.username or f"user_{user.id}",
+                                    'display_name': cleaned_winner_text
+                                }
+                            
+                            elif getattr(entity, 'type', '') == "mention":
+                                username = entity_text.lstrip('@')
+                                return {
+                                    'type': 'mention',
+                                    'username': username,
+                                    'display_name': cleaned_winner_text
+                                }
+                
+                # --- Fallback: no useful entity, parse raw text ---
+                if cleaned_winner_text.startswith('@'):
+                    return {
+                        'type': 'fallback_mention',
+                        'username': cleaned_winner_text.lstrip('@'),
+                        'display_name': cleaned_winner_text
+                    }
+                else:
+                    return {
+                        'type': 'fallback',
+                        'username': cleaned_winner_text,
+                        'display_name': cleaned_winner_text
+                    }
             
             logger.warning("❌ No winner found in message")
             return None
@@ -749,6 +732,7 @@ class LudoManagerBot:
         except Exception as e:
             logger.error(f"❌ Error in winner extraction: {e}")
             return None
+
 
     
     async def _extract_game_data_from_message(self, message_text: str, admin_user_id: int, message_id: int, chat_id: int, message_entities: List = None) -> Optional[Dict]:
