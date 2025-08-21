@@ -6,7 +6,7 @@ API_ID = 18274091
 API_HASH = "97afe4ab12cb99dab4bed25f768f5bbc"
 BOT_TOKEN = "5664706056:AAGweTBRqnaS1oQVEWkgxXl1WL9wUO_zuiA"
 ADMIN_IDS = [2109516065]
-GROUP_ID = -1002849354155
+GROUP_ID = -1002504305026
 
 app = Client("ludo_manager", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
